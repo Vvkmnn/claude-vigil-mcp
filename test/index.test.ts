@@ -220,17 +220,20 @@ describe('snapshot', () => {
   });
 
   it('.vigilignore: matching files excluded', () => {
-    writeProjectFile(projectDir, '.vigilignore', '*.log\ntmp/');
+    // .vigilignore now lives in .claude/vigil/, not project root
+    const vigilDir = join(projectDir, '.claude', 'vigil');
+    mkdirSync(vigilDir, { recursive: true });
+    writeFileSync(join(vigilDir, '.vigilignore'), '*.log\ntmp/');
+
     writeProjectFile(projectDir, 'debug.log', 'log content');
     writeProjectFile(projectDir, 'tmp/cache.json', '{}');
 
     const result = createCheckpoint(projectDir, 'with-ignore', 'manual');
-    const manifest = readManifest(join(projectDir, '.claude', 'vigil'));
+    const manifest = readManifest(vigilDir);
     const files = Object.keys(manifest.checkpoints[0].files);
 
     assert.ok(!files.includes('debug.log'), 'should skip *.log');
     assert.ok(!files.includes('tmp/cache.json'), 'should skip tmp/');
-    assert.ok(files.includes('.vigilignore'), '.vigilignore itself is captured');
   });
 
   it('list with name: drill into checkpoint files', () => {

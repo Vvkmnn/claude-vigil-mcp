@@ -9,8 +9,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  readManifest, createCheckpoint, restoreCheckpoint,
-  diffCheckpoint, listCheckpointFiles, deleteCheckpoint
+  readManifest, writeManifest, createCheckpoint, restoreCheckpoint,
+  diffCheckpoint, listCheckpointFiles, deleteCheckpoint,
+  detectDerivedDirs, detectSkippedDirs, writeVigilignore, hasVigilignore
 } from './snapshot.js';
 import { diskUsage } from './store.js';
 
@@ -77,19 +78,41 @@ const server = new McpServer({ name: 'claude-vigil-mcp', version: '0.1.0' });
 server.tool(
   'vigil_save',
   'Create a named checkpoint of the entire project. Runs in background — returns immediately.',
-  { name: z.string().describe('Checkpoint name (e.g., "before-refactor", "v1.0")') },
-  async ({ name }) => {
+  {
+    name: z.string().describe('Checkpoint name (e.g., "before-refactor", "v1.0")'),
+    max_checkpoints: z.number().int().min(1).max(50).optional()
+      .describe('Increase the maximum number of checkpoint slots (default: 3)')
+  },
+  async ({ name, max_checkpoints }) => {
     const projectDir = getProjectDir();
     const vigilDir = join(projectDir, '.claude', 'vigil');
     const manifest = readManifest(vigilDir);
+
+    // Update capacity if requested
+    if (max_checkpoints !== undefined) {
+      manifest.config = manifest.config ?? {};
+      manifest.config.maxCheckpoints = max_checkpoints;
+      writeManifest(vigilDir, manifest);
+    }
+
     const max = manifest.config?.maxCheckpoints ?? 3;
 
     // Check slot limit
     if (manifest.checkpoints.length >= max) {
       const names = manifest.checkpoints.map(c => `${c.name} (${timeAgo(c.created)})`).join(' \u00B7 ');
       return { content: [{ type: 'text' as const, text:
-        fmt(`${max}/${max} full \u2501\u2501 delete one first`, [names], projectDir)
+        fmt(`${max}/${max} full`, [names, `delete one with vigil_delete, or increase capacity with max_checkpoints param`], projectDir)
       }] };
+    }
+
+    // First save: auto-detect derived dirs from .gitignore + known patterns, create .vigilignore
+    let firstSaveSkips: string[] | null = null;
+    if (!hasVigilignore(vigilDir)) {
+      const derived = detectDerivedDirs(projectDir);
+      writeVigilignore(vigilDir, derived, projectDir);
+      if (derived.length > 0) {
+        firstSaveSkips = derived;
+      }
     }
 
     // Check duplicate name
@@ -106,8 +129,21 @@ server.tool(
         fmt(`error: ${result.error}`, null, projectDir)
       }] };
     }
+    const saveHeader = `saved "${name}" \u2501\u2501 ${'fileCount' in result ? result.fileCount : 0} files \u00B7 ${'usage' in result ? formatBytes(result.usage.totalBytes) : ''}`;
+
+    // Always show what derived dirs were skipped so the user can review
+    const skippedDirs = detectDerivedDirs(projectDir);
+    const saveLines: string[] = [];
+    if (skippedDirs.length > 0) {
+      saveLines.push(`skipped: ${skippedDirs.join(', ')}`);
+    }
+    if (firstSaveSkips) {
+      saveLines.push('first save — confirm these exclusions look correct');
+      saveLines.push('edit .claude/vigil/.vigilignore to adjust');
+    }
+
     return { content: [{ type: 'text' as const, text:
-      fmt(`saved "${name}" \u2501\u2501 ${'fileCount' in result ? result.fileCount : 0} files \u00B7 ${'usage' in result ? formatBytes(result.usage.totalBytes) : ''}`, null, projectDir)
+      fmt(saveHeader, saveLines.length > 0 ? saveLines : null, projectDir)
     }] };
   }
 );
@@ -241,8 +277,17 @@ server.tool(
     const detail = files
       ? `${result.filesRestored} file${result.filesRestored !== 1 ? 's' : ''}`
       : `${result.filesRestored} files (full)`;
+
+    // Report skipped dirs so the calling model knows what needs regenerating
+    const skipped = detectSkippedDirs(projectDir);
+    const lines: string[] = [];
+    if (skipped.length > 0) {
+      lines.push(`not restored (derived): ${skipped.join(', ')}`);
+      lines.push('rebuild these before running the project');
+    }
+
     return { content: [{ type: 'text' as const, text:
-      fmt(`restored from "${name}" \u2501\u2501 ${detail} \u00B7 quicksaved first`, null, projectDir)
+      fmt(`restored from "${name}" \u2501\u2501 ${detail} \u00B7 quicksaved first`, lines.length > 0 ? lines : null, projectDir)
     }] };
   }
 );

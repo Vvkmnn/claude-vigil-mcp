@@ -16,6 +16,76 @@ import type {
 // VCS internals and OS junk — never useful to restore, can cause conflicts
 const ALWAYS_SKIP = new Set(['.git', '.hg', '.svn', '.DS_Store', 'Thumbs.db', '.claude']);
 
+// Derived artifact directories — managed by build systems, regenerated on install/build.
+// Storing these wastes space and causes permission issues on restore (e.g. node_modules/.bin).
+const DERIVED_DIRS = new Set([
+  // JavaScript / TypeScript (Node.js, Deno, Bun)
+  'node_modules', 'dist', 'build', 'out', '.next', '.nuxt', '.output', '.parcel-cache', '.turbo',
+  // Python
+  'venv', '.venv', 'env', '__pycache__', '.eggs', '.mypy_cache', '.pytest_cache', '.ruff_cache', '.tox',
+  // Rust
+  'target',
+  // Go
+  'vendor',
+  // Java / Kotlin / Scala
+  '.gradle', '.m2', '.mvn', '.idea', 'bin', 'obj',
+  // C# / .NET
+  'packages',
+  // C / C++
+  'cmake-build-debug', 'cmake-build-release',
+  // Ruby
+  'vendor/bundle', '.bundle',
+  // PHP (Composer)
+  'vendor',
+  // Swift / iOS
+  'Pods', '.build', 'DerivedData',
+  // Dart / Flutter
+  '.dart_tool', '.flutter-plugins', '.pub-cache',
+  // Elixir / Erlang
+  '_build', 'deps',
+  // Haskell
+  '.stack-work', 'dist-newstyle',
+  // Lua (LuaRocks)
+  'lua_modules',
+  // R
+  'renv', 'packrat',
+  // Terraform / IaC
+  '.terraform',
+  // General build caches
+  '.cache', '.parcel-cache', '.eslintcache', '.stylelintcache',
+]);
+
+/**
+ * Parse .gitignore to extract directory patterns.
+ * This is the project's own declaration of "what's derived" — language-agnostic.
+ */
+function parseGitignoreDirs(projectDir: string): string[] {
+  const p = join(projectDir, '.gitignore');
+  if (!existsSync(p)) return [];
+  return readFileSync(p, 'utf8')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l && !l.startsWith('#'))
+    // Only directory patterns (trailing / or known dir names that exist)
+    .filter(l => {
+      // Explicit directory pattern like "dist/" or "node_modules/"
+      if (l.endsWith('/')) return true;
+      // Check if the pattern (without negation/glob) refers to an existing directory
+      const clean = l.replace(/^!/, '').replace(/\/\*\*$/, '').replace(/\/$/, '');
+      if (clean.includes('*')) return false; // skip glob file patterns like *.pyc
+      try {
+        return existsSync(join(projectDir, clean)) && statSync(join(projectDir, clean)).isDirectory();
+      } catch { return false; }
+    })
+    .map(l => l.replace(/\/\*\*$/, '/').replace(/\/$/, '') + '/') // normalize to "dir/"
+    .filter(l => !l.startsWith('!')); // skip negation patterns
+}
+
+/** Return which derived dirs were skipped and exist in the project (need regenerating after restore). */
+export function detectSkippedDirs(projectDir: string): string[] {
+  return detectDerivedDirs(projectDir);
+}
+
 const DEFAULT_MAX_CHECKPOINTS = 3;
 
 // ── Manifest I/O ──────────────────────────────────────────────────
@@ -37,8 +107,67 @@ export function writeManifest(vigilDir: string, manifest: Manifest): void {
 
 // ── .vigilignore parsing (gitignore subset) ───────────────────────
 
+/** Detect which DERIVED_DIRS actually exist in the project. */
+/**
+ * Detect derived/artifact directories in the project.
+ * Merges two sources:
+ *   1. Project's .gitignore — the project's own declaration of what's derived
+ *   2. DERIVED_DIRS fallback — common patterns for projects without .gitignore coverage
+ * Returns normalized "dir/" patterns for directories that actually exist.
+ */
+export function detectDerivedDirs(projectDir: string): string[] {
+  const found = new Set<string>();
+
+  // Source 1: .gitignore directory patterns (language-agnostic, project-specific)
+  for (const dir of parseGitignoreDirs(projectDir)) {
+    found.add(dir);
+  }
+
+  // Source 2: hardcoded fallback for common derived dirs
+  for (const dir of DERIVED_DIRS) {
+    const fullPath = join(projectDir, dir);
+    try {
+      if (existsSync(fullPath) && statSync(fullPath).isDirectory()) {
+        found.add(dir + '/');
+      }
+    } catch { /* permission denied, broken symlink */ }
+  }
+
+  return [...found].sort();
+}
+
+/** Write the .vigilignore file inside the vigil dir. */
+export function writeVigilignore(vigilDir: string, patterns: string[], projectDir?: string): void {
+  mkdirSync(vigilDir, { recursive: true });
+
+  // Separate patterns by source for clarity
+  const gitignoreDirs = projectDir ? new Set(parseGitignoreDirs(projectDir)) : new Set<string>();
+  const fromGitignore = patterns.filter(p => gitignoreDirs.has(p));
+  const fromFallback = patterns.filter(p => !gitignoreDirs.has(p));
+
+  const lines: string[] = ['# Auto-detected by vigil — edit to adjust what gets checkpointed'];
+  if (fromGitignore.length > 0) {
+    lines.push('', '# From .gitignore (project declares these as derived)');
+    lines.push(...fromGitignore);
+  }
+  if (fromFallback.length > 0) {
+    lines.push('', '# Common build artifacts (detected by vigil)');
+    lines.push(...fromFallback);
+  }
+  lines.push('', '# Add project-specific patterns below', '');
+
+  writeFileSync(join(vigilDir, '.vigilignore'), lines.join('\n'));
+}
+
+/** Check if .vigilignore has been initialized (first-save flow complete). */
+export function hasVigilignore(vigilDir: string): boolean {
+  return existsSync(join(vigilDir, '.vigilignore'));
+}
+
 function parseVigilignore(projectDir: string): string[] {
-  const p = join(projectDir, '.vigilignore');
+  // Read from .claude/vigil/.vigilignore (not project root)
+  const vigilDir = join(projectDir, '.claude', 'vigil');
+  const p = join(vigilDir, '.vigilignore');
   if (!existsSync(p)) return [];
   return readFileSync(p, 'utf8')
     .split('\n')
@@ -81,6 +210,7 @@ export function walkProject(projectDir: string, callback: WalkCallback, ignorePa
 
     for (const entry of entries) {
       if (ALWAYS_SKIP.has(entry.name)) continue;
+      if (entry.isDirectory() && DERIVED_DIRS.has(entry.name)) continue;
 
       const fullPath = join(dir, entry.name);
       const relPath = relative(projectDir, fullPath);
