@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "claude-vigil-mcp": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/Users/v/Projects/claude-vigil-mcp/dist/src/index.js"
+      ],
+      "env": {}
+    }
+  }
+}

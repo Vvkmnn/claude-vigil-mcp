@@ -16,7 +16,7 @@ try {
 
   if (DESTRUCTIVE.test(cmd)) {
     const projectDir = process.cwd();
-    const workerPath = join(__dirname, '..', 'src', 'worker.js');
+    const workerPath = join(__dirname, '..', 'dist', 'src', 'worker.js');
 
     const child = spawn(process.execPath, [
       workerPath, projectDir, '~quicksave', 'quicksave'

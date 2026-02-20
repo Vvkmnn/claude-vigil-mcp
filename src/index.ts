@@ -18,14 +18,14 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 // ── Formatting helpers ────────────────────────────────────────────
 
-function formatBytes(bytes) {
+function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-function timeAgo(isoDate) {
+function timeAgo(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'just now';
@@ -35,7 +35,7 @@ function timeAgo(isoDate) {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-function statusLine(projectDir) {
+function statusLine(projectDir: string): string {
   const vigilDir = join(projectDir, '.claude', 'vigil');
   const manifest = readManifest(vigilDir);
   const usage = diskUsage(vigilDir);
@@ -47,7 +47,7 @@ function statusLine(projectDir) {
 
 // Single-line: 🏺 ━━ action ━━ details ━━ status
 // Multi-line:  🏺 ┏━ header ━━ status / ┃ line / ┗ last line
-function fmt(header, body, projectDir) {
+function fmt(header: string, body: string[] | null | undefined, projectDir?: string): string {
   const status = projectDir ? statusLine(projectDir) : '';
   if (!body || body.length === 0) {
     return status ? `\u{1F3FA} \u2501\u2501 ${header} \u2501\u2501 ${status}` : `\u{1F3FA} \u2501\u2501 ${header}`;
@@ -63,7 +63,7 @@ function fmt(header, body, projectDir) {
 
 // ── Project directory resolution ──────────────────────────────────
 
-function getProjectDir() {
+function getProjectDir(): string {
   // MCP servers receive cwd from the client, or use env var
   return process.env.VIGIL_PROJECT_DIR || process.cwd();
 }
@@ -87,22 +87,27 @@ server.tool(
     // Check slot limit
     if (manifest.checkpoints.length >= max) {
       const names = manifest.checkpoints.map(c => `${c.name} (${timeAgo(c.created)})`).join(' \u00B7 ');
-      return { content: [{ type: 'text', text:
+      return { content: [{ type: 'text' as const, text:
         fmt(`${max}/${max} full \u2501\u2501 delete one first`, [names], projectDir)
       }] };
     }
 
     // Check duplicate name
     if (manifest.checkpoints.some(c => c.name === name)) {
-      return { content: [{ type: 'text', text:
+      return { content: [{ type: 'text' as const, text:
         fmt(`"${name}" already exists \u2501\u2501 choose a different name or delete it first`, null, projectDir)
       }] };
     }
 
     // Synchronous snapshot — confirmed before returning
     const result = createCheckpoint(projectDir, name, 'manual');
-    return { content: [{ type: 'text', text:
-      fmt(`saved "${name}" \u2501\u2501 ${result.fileCount} files \u00B7 ${formatBytes(result.usage.totalBytes)}`, null, projectDir)
+    if ('error' in result) {
+      return { content: [{ type: 'text' as const, text:
+        fmt(`error: ${result.error}`, null, projectDir)
+      }] };
+    }
+    return { content: [{ type: 'text' as const, text:
+      fmt(`saved "${name}" \u2501\u2501 ${'fileCount' in result ? result.fileCount : 0} files \u00B7 ${'usage' in result ? formatBytes(result.usage.totalBytes) : ''}`, null, projectDir)
     }] };
   }
 );
@@ -122,15 +127,15 @@ server.tool(
     // Drill into a specific checkpoint
     if (name) {
       const result = listCheckpointFiles(projectDir, name, glob);
-      if (result.error) {
-        return { content: [{ type: 'text', text: fmt(`"${name}" not found`, null, projectDir) }] };
+      if ('error' in result) {
+        return { content: [{ type: 'text' as const, text: fmt(`"${name}" not found`, null, projectDir) }] };
       }
       const lines = result.files.slice(0, 50);
       if (result.files.length > 50) lines.push(`... and ${result.files.length - 50} more`);
       const header = glob
         ? `${name} \u2501\u2501 ${result.files.length} of ${result.totalFiles} files matching ${glob}`
         : `${name} \u2501\u2501 ${result.totalFiles} files`;
-      return { content: [{ type: 'text', text: fmt(header, lines, projectDir) }] };
+      return { content: [{ type: 'text' as const, text: fmt(header, lines, projectDir) }] };
     }
 
     // Overview of all checkpoints
@@ -141,12 +146,12 @@ server.tool(
     const inProgress = existsSync(join(vigilDir, '.in-progress'));
 
     if (manifest.checkpoints.length === 0 && !manifest.quicksave && !inProgress) {
-      return { content: [{ type: 'text', text:
+      return { content: [{ type: 'text' as const, text:
         fmt('no checkpoints yet \u2501\u2501 use vigil_save to create one', null, projectDir)
       }] };
     }
 
-    const lines = manifest.checkpoints.map(c => {
+    const lines: string[] = manifest.checkpoints.map(c => {
       const age = timeAgo(c.created);
       return `${c.name}${' '.repeat(Math.max(1, 20 - c.name.length))}${age}${' '.repeat(Math.max(1, 10 - age.length))}${c.fileCount} files`;
     });
@@ -159,7 +164,7 @@ server.tool(
 
     const count = manifest.checkpoints.length;
     const header = `${count} checkpoint${count !== 1 ? 's' : ''}`;
-    return { content: [{ type: 'text', text: fmt(header, lines.length ? lines : null, projectDir) }] };
+    return { content: [{ type: 'text' as const, text: fmt(header, lines.length ? lines : null, projectDir) }] };
   }
 );
 
@@ -176,36 +181,43 @@ server.tool(
     const projectDir = getProjectDir();
     const result = diffCheckpoint(projectDir, name, { file });
 
-    if (result.error === 'not_found') {
-      return { content: [{ type: 'text', text: fmt(`"${name}" not found`, null, projectDir) }] };
-    }
-    if (result.error === 'file_not_found') {
-      return { content: [{ type: 'text', text: fmt(`"${file}" not in "${name}"`, null, projectDir) }] };
+    if ('error' in result) {
+      if (result.error === 'not_found') {
+        return { content: [{ type: 'text' as const, text: fmt(`"${name}" not found`, null, projectDir) }] };
+      }
+      if (result.error === 'file_not_found') {
+        return { content: [{ type: 'text' as const, text: fmt(`"${file}" not in "${name}"`, null, projectDir) }] };
+      }
     }
 
     // Single file retrieval — header + raw content
-    if (result.content !== undefined) {
-      return { content: [{ type: 'text', text:
+    if ('content' in result) {
+      return { content: [{ type: 'text' as const, text:
         `\u{1F3FA} \u2501\u2501 ${file} from ${name} \u2501\u2501\n${result.content}`
       }] };
     }
 
     // Full diff
-    const lines = [];
-    for (const f of result.modified) lines.push(`modified  ${f}`);
-    for (const f of result.added) lines.push(`added     ${f}`);
-    for (const f of result.deleted) lines.push(`deleted   ${f}`);
-    const total = result.modified.length + result.added.length + result.deleted.length;
+    if ('added' in result) {
+      const lines: string[] = [];
+      for (const f of result.modified) lines.push(`modified  ${f}`);
+      for (const f of result.added) lines.push(`added     ${f}`);
+      for (const f of result.deleted) lines.push(`deleted   ${f}`);
+      const total = result.modified.length + result.added.length + result.deleted.length;
 
-    if (total === 0) {
-      return { content: [{ type: 'text', text:
-        fmt(`no changes vs "${name}"`, null, projectDir)
+      if (total === 0) {
+        return { content: [{ type: 'text' as const, text:
+          fmt(`no changes vs "${name}"`, null, projectDir)
+        }] };
+      }
+
+      return { content: [{ type: 'text' as const, text:
+        fmt(`${total} change${total !== 1 ? 's' : ''} vs ${name}`, lines, projectDir)
       }] };
     }
 
-    return { content: [{ type: 'text', text:
-      fmt(`${total} change${total !== 1 ? 's' : ''} vs ${name}`, lines, projectDir)
-    }] };
+    // Fallback (shouldn't reach here)
+    return { content: [{ type: 'text' as const, text: fmt('unexpected result', null, projectDir) }] };
   }
 );
 
@@ -222,14 +234,14 @@ server.tool(
     const projectDir = getProjectDir();
     const result = restoreCheckpoint(projectDir, name, { files });
 
-    if (result.error === 'not_found') {
-      return { content: [{ type: 'text', text: fmt(`"${name}" not found`, null, projectDir) }] };
+    if ('error' in result) {
+      return { content: [{ type: 'text' as const, text: fmt(`"${name}" not found`, null, projectDir) }] };
     }
 
     const detail = files
       ? `${result.filesRestored} file${result.filesRestored !== 1 ? 's' : ''}`
       : `${result.filesRestored} files (full)`;
-    return { content: [{ type: 'text', text:
+    return { content: [{ type: 'text' as const, text:
       fmt(`restored from "${name}" \u2501\u2501 ${detail} \u00B7 quicksaved first`, null, projectDir)
     }] };
   }
@@ -248,18 +260,18 @@ server.tool(
     const projectDir = getProjectDir();
 
     if (!name && !all) {
-      return { content: [{ type: 'text', text:
+      return { content: [{ type: 'text' as const, text:
         fmt('specify a checkpoint name or all=true', null, projectDir)
       }] };
     }
 
     const result = deleteCheckpoint(projectDir, name, { all });
 
-    if (result.error === 'not_found') {
-      return { content: [{ type: 'text', text: fmt(`"${name}" not found`, null, projectDir) }] };
+    if ('error' in result) {
+      return { content: [{ type: 'text' as const, text: fmt(`"${name}" not found`, null, projectDir) }] };
     }
 
-    return { content: [{ type: 'text', text:
+    return { content: [{ type: 'text' as const, text:
       fmt(`deleted ${result.deleted} \u2501\u2501 reclaimed ${formatBytes(result.gc.bytesFreed)} (${result.gc.removed} objects)`, null, projectDir)
     }] };
   }

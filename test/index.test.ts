@@ -1,9 +1,9 @@
-import { describe, it, before, after, beforeEach } from 'node:test';
+import { describe, it, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, existsSync, rmSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
 import { hashContent, storeObject, readObject, gcObjects, diskUsage } from '../src/store.js';
 import {
@@ -14,25 +14,24 @@ import {
 
 // ── Test helpers ──────────────────────────────────────────────────
 
-function makeTempProject() {
-  const dir = mkdtempSync(join(tmpdir(), 'vigil-test-'));
-  return dir;
+function makeTempProject(): string {
+  return mkdtempSync(join(tmpdir(), 'vigil-test-'));
 }
 
-function writeProjectFile(projectDir, relPath, content) {
+function writeProjectFile(projectDir: string, relPath: string, content: string): void {
   const full = join(projectDir, relPath);
   mkdirSync(join(full, '..'), { recursive: true });
   writeFileSync(full, content);
 }
 
-function readProjectFile(projectDir, relPath) {
+function readProjectFile(projectDir: string, relPath: string): string {
   return readFileSync(join(projectDir, relPath), 'utf8');
 }
 
 // ── CAS Store Tests ───────────────────────────────────────────────
 
 describe('store', () => {
-  let vigilDir;
+  let vigilDir: string;
 
   before(() => {
     vigilDir = join(makeTempProject(), '.claude', 'vigil');
@@ -85,7 +84,7 @@ describe('store', () => {
 // ── Snapshot Tests ────────────────────────────────────────────────
 
 describe('snapshot', () => {
-  let projectDir;
+  let projectDir: string;
 
   beforeEach(() => {
     projectDir = makeTempProject();
@@ -96,9 +95,11 @@ describe('snapshot', () => {
 
   it('create + list checkpoint', () => {
     const result = createCheckpoint(projectDir, 'v1', 'manual');
+    assert.ok(!('error' in result));
+    if ('error' in result) return;
     assert.equal(result.name, 'v1');
     assert.equal(result.fileCount, 3);
-    assert.ok(result.newObjects > 0);
+    assert.ok('newObjects' in result && result.newObjects > 0);
 
     const manifest = readManifest(join(projectDir, '.claude', 'vigil'));
     assert.equal(manifest.checkpoints.length, 1);
@@ -114,6 +115,8 @@ describe('snapshot', () => {
 
     // Restore
     const result = restoreCheckpoint(projectDir, 'original');
+    assert.ok(!('error' in result));
+    if ('error' in result) return;
     assert.equal(result.filesRestored, 3);
 
     // Verify original content
@@ -127,7 +130,7 @@ describe('snapshot', () => {
 
     const manifest = readManifest(join(projectDir, '.claude', 'vigil'));
     assert.ok(manifest.quicksave, 'quicksave should exist after restore');
-    assert.equal(manifest.quicksave.name, '~quicksave');
+    assert.equal(manifest.quicksave!.name, '~quicksave');
   });
 
   it('selective restore: one file reverted, others unchanged', () => {
@@ -152,6 +155,8 @@ describe('snapshot', () => {
     rmSync(join(projectDir, 'README.md'));
 
     const diff = diffCheckpoint(projectDir, 'v1');
+    assert.ok('modified' in diff);
+    if (!('modified' in diff)) return;
     assert.ok(diff.modified.includes('src/app.js'));
     assert.ok(diff.added.includes('src/new.js'));
     assert.ok(diff.deleted.includes('README.md'));
@@ -162,6 +167,8 @@ describe('snapshot', () => {
     writeProjectFile(projectDir, 'src/app.js', 'modified');
 
     const result = diffCheckpoint(projectDir, 'v1', { file: 'src/app.js' });
+    assert.ok('content' in result);
+    if (!('content' in result)) return;
     assert.equal(result.content, 'console.log("hello");');
 
     // Current file should still be modified
@@ -173,14 +180,16 @@ describe('snapshot', () => {
     createCheckpoint(projectDir, 'b', 'manual');
     createCheckpoint(projectDir, 'c', 'manual');
     const result = createCheckpoint(projectDir, 'd', 'manual');
+    assert.ok('error' in result);
+    if (!('error' in result)) return;
     assert.equal(result.error, 'slots_full');
-    assert.equal(result.max, 3);
+    assert.ok('max' in result && result.max === 3);
   });
 
   it('quicksave: overwritten on each new quicksave', () => {
     createCheckpoint(projectDir, '~quicksave', 'quicksave');
     const manifest1 = readManifest(join(projectDir, '.claude', 'vigil'));
-    const created1 = manifest1.quicksave.created;
+    const created1 = manifest1.quicksave!.created;
 
     // Small delay to ensure different timestamp
     writeProjectFile(projectDir, 'src/app.js', 'changed');
@@ -198,6 +207,8 @@ describe('snapshot', () => {
     writeFileSync(join(projectDir, 'image.png'), binary);
 
     const result = createCheckpoint(projectDir, 'with-binary', 'manual');
+    assert.ok(!('error' in result));
+    if ('error' in result) return;
     assert.equal(result.fileCount, 4); // 3 text files + 1 binary
 
     // Modify and restore
@@ -225,6 +236,8 @@ describe('snapshot', () => {
   it('list with name: drill into checkpoint files', () => {
     createCheckpoint(projectDir, 'v1', 'manual');
     const result = listCheckpointFiles(projectDir, 'v1');
+    assert.ok(!('error' in result));
+    if ('error' in result) return;
     assert.equal(result.files.length, 3);
     assert.ok(result.files.includes('src/app.js'));
   });
@@ -232,6 +245,8 @@ describe('snapshot', () => {
   it('list with glob: filter files', () => {
     createCheckpoint(projectDir, 'v1', 'manual');
     const result = listCheckpointFiles(projectDir, 'v1', 'src/**');
+    assert.ok(!('error' in result));
+    if ('error' in result) return;
     assert.equal(result.files.length, 2); // app.js and utils.js
     assert.equal(result.totalFiles, 3);
   });
@@ -242,6 +257,8 @@ describe('snapshot', () => {
     const before = diskUsage(vigilDir);
 
     const result = deleteCheckpoint(projectDir, 'v1');
+    assert.ok(!('error' in result));
+    if ('error' in result) return;
     assert.equal(result.deleted, 'v1');
     assert.ok(result.gc.removed > 0);
     assert.ok(result.gc.bytesFreed > 0);
@@ -253,7 +270,9 @@ describe('snapshot', () => {
   it('delete all: everything cleared', () => {
     createCheckpoint(projectDir, 'a', 'manual');
     createCheckpoint(projectDir, 'b', 'manual');
-    const result = deleteCheckpoint(projectDir, null, { all: true });
+    const result = deleteCheckpoint(projectDir, undefined, { all: true });
+    assert.ok(!('error' in result));
+    if ('error' in result) return;
     assert.equal(result.deleted, 'all');
 
     const manifest = readManifest(join(projectDir, '.claude', 'vigil'));
@@ -264,14 +283,20 @@ describe('snapshot', () => {
   it('duplicate name rejected', () => {
     createCheckpoint(projectDir, 'same', 'manual');
     const result = createCheckpoint(projectDir, 'same', 'manual');
+    assert.ok('error' in result);
+    if (!('error' in result)) return;
     assert.equal(result.error, 'duplicate_name');
   });
 
   it('not found errors handled gracefully', () => {
-    assert.equal(diffCheckpoint(projectDir, 'nope').error, 'not_found');
-    assert.equal(restoreCheckpoint(projectDir, 'nope').error, 'not_found');
-    assert.equal(listCheckpointFiles(projectDir, 'nope').error, 'not_found');
-    assert.equal(deleteCheckpoint(projectDir, 'nope').error, 'not_found');
+    const diff = diffCheckpoint(projectDir, 'nope');
+    assert.ok('error' in diff && diff.error === 'not_found');
+    const restore = restoreCheckpoint(projectDir, 'nope');
+    assert.ok('error' in restore && restore.error === 'not_found');
+    const list = listCheckpointFiles(projectDir, 'nope');
+    assert.ok('error' in list);
+    const del = deleteCheckpoint(projectDir, 'nope');
+    assert.ok('error' in del && del.error === 'not_found');
   });
 });
 

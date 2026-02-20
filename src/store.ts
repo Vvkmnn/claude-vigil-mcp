@@ -8,9 +8,10 @@ import {
   readdirSync, unlinkSync, statSync
 } from 'node:fs';
 import { join } from 'node:path';
+import type { Manifest, GCResult, DiskUsage } from './types.js';
 
 /** SHA-256 hash of a buffer, returned as hex string. */
-export function hashContent(buf) {
+export function hashContent(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex');
 }
 
@@ -18,7 +19,7 @@ export function hashContent(buf) {
  * Store a buffer in the CAS. Returns its hash.
  * Dedup: if the object already exists, skip the write.
  */
-export function storeObject(vigilDir, buf) {
+export function storeObject(vigilDir: string, buf: Buffer): string {
   const hash = hashContent(buf);
   const dir = join(vigilDir, 'objects', hash.slice(0, 2));
   const file = join(dir, hash.slice(2) + '.gz');
@@ -29,7 +30,7 @@ export function storeObject(vigilDir, buf) {
 }
 
 /** Read an object from the CAS by hash. Returns the original buffer. */
-export function readObject(vigilDir, hash) {
+export function readObject(vigilDir: string, hash: string): Buffer {
   const file = join(vigilDir, 'objects', hash.slice(0, 2), hash.slice(2) + '.gz');
   return gunzipSync(readFileSync(file));
 }
@@ -39,8 +40,8 @@ export function readObject(vigilDir, hash) {
  * Removes objects not referenced by any checkpoint in the manifest.
  * Returns { removed, bytesFreed }.
  */
-export function gcObjects(vigilDir, manifest) {
-  const referenced = new Set();
+export function gcObjects(vigilDir: string, manifest: Manifest): GCResult {
+  const referenced = new Set<string>();
   for (const cp of manifest.checkpoints) {
     for (const hash of Object.values(cp.files)) {
       referenced.add(hash);
@@ -86,7 +87,7 @@ export function gcObjects(vigilDir, manifest) {
  * Calculate total disk usage of the objects/ directory.
  * Returns { totalBytes, objectCount }.
  */
-export function diskUsage(vigilDir) {
+export function diskUsage(vigilDir: string): DiskUsage {
   let totalBytes = 0;
   let objectCount = 0;
   const objectsDir = join(vigilDir, 'objects');

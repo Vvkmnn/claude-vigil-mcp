@@ -7,6 +7,11 @@ import {
 } from 'node:fs';
 import { join, relative, dirname } from 'node:path';
 import { hashContent, storeObject, readObject, gcObjects, diskUsage } from './store.js';
+import type {
+  Manifest, Checkpoint, CheckpointFiles,
+  CreateCheckpointResult, RestoreResult, DiffResult, ListResult, DeleteResult,
+  WalkCallback
+} from './types.js';
 
 // VCS internals and OS junk — never useful to restore, can cause conflicts
 const ALWAYS_SKIP = new Set(['.git', '.hg', '.svn', '.DS_Store', 'Thumbs.db', '.claude']);
@@ -15,24 +20,24 @@ const DEFAULT_MAX_CHECKPOINTS = 3;
 
 // ── Manifest I/O ──────────────────────────────────────────────────
 
-function manifestPath(vigilDir) {
+function manifestPath(vigilDir: string): string {
   return join(vigilDir, 'manifest.json');
 }
 
-export function readManifest(vigilDir) {
+export function readManifest(vigilDir: string): Manifest {
   const p = manifestPath(vigilDir);
   if (!existsSync(p)) return { checkpoints: [], quicksave: null, config: {} };
   return JSON.parse(readFileSync(p, 'utf8'));
 }
 
-export function writeManifest(vigilDir, manifest) {
+export function writeManifest(vigilDir: string, manifest: Manifest): void {
   mkdirSync(vigilDir, { recursive: true });
   writeFileSync(manifestPath(vigilDir), JSON.stringify(manifest, null, 2));
 }
 
 // ── .vigilignore parsing (gitignore subset) ───────────────────────
 
-function parseVigilignore(projectDir) {
+function parseVigilignore(projectDir: string): string[] {
   const p = join(projectDir, '.vigilignore');
   if (!existsSync(p)) return [];
   return readFileSync(p, 'utf8')
@@ -42,7 +47,7 @@ function parseVigilignore(projectDir) {
 }
 
 /** Simple gitignore-style match: supports trailing /, leading *, and exact names. */
-function matchesIgnore(relPath, patterns) {
+function matchesIgnore(relPath: string, patterns: string[]): boolean {
   for (const pattern of patterns) {
     // Directory pattern: "node_modules/" matches any path starting with it
     if (pattern.endsWith('/')) {
@@ -68,8 +73,8 @@ function matchesIgnore(relPath, patterns) {
  * Skips VCS internals, OS junk, and .vigilignore patterns.
  * No file size or binary filtering — captures everything.
  */
-export function walkProject(projectDir, callback, ignorePatterns = []) {
-  function walk(dir) {
+export function walkProject(projectDir: string, callback: WalkCallback, ignorePatterns: string[] = []): void {
+  function walk(dir: string): void {
     let entries;
     try { entries = readdirSync(dir, { withFileTypes: true }); }
     catch { return; } // Permission denied, broken symlink, etc.
@@ -103,7 +108,7 @@ export function walkProject(projectDir, callback, ignorePatterns = []) {
  * Create a named checkpoint. Walks project, hashes + stores every file.
  * Returns { name, type, created, fileCount, newObjects }.
  */
-export function createCheckpoint(projectDir, name, type = 'manual') {
+export function createCheckpoint(projectDir: string, name: string, type: string = 'manual'): CreateCheckpointResult {
   const vigilDir = join(projectDir, '.claude', 'vigil');
   mkdirSync(join(vigilDir, 'objects'), { recursive: true });
 
@@ -113,7 +118,7 @@ export function createCheckpoint(projectDir, name, type = 'manual') {
 
   // For quicksave type, overwrite the single quicksave slot
   if (type === 'quicksave') {
-    const files = {};
+    const files: CheckpointFiles = {};
     let fileCount = 0;
     walkProject(projectDir, (relPath, buf) => {
       files[relPath] = storeObject(vigilDir, buf);
@@ -139,7 +144,7 @@ export function createCheckpoint(projectDir, name, type = 'manual') {
     return { error: 'duplicate_name', name };
   }
 
-  const files = {};
+  const files: CheckpointFiles = {};
   let fileCount = 0;
   let newObjects = 0;
 
@@ -154,7 +159,7 @@ export function createCheckpoint(projectDir, name, type = 'manual') {
     fileCount++;
   }, ignorePatterns);
 
-  const checkpoint = {
+  const checkpoint: Checkpoint = {
     name,
     type,
     created: new Date().toISOString(),
@@ -173,12 +178,12 @@ export function createCheckpoint(projectDir, name, type = 'manual') {
  * opts.files: array of specific file paths to restore (selective).
  * Returns { restored, quicksaved, filesRestored }.
  */
-export function restoreCheckpoint(projectDir, name, opts = {}) {
+export function restoreCheckpoint(projectDir: string, name: string, opts: { files?: string[] } = {}): RestoreResult {
   const vigilDir = join(projectDir, '.claude', 'vigil');
   const manifest = readManifest(vigilDir);
 
   // Find the checkpoint
-  let checkpoint;
+  let checkpoint: Checkpoint | null | undefined;
   if (name === '~quicksave') {
     checkpoint = manifest.quicksave;
   } else {
@@ -191,7 +196,7 @@ export function restoreCheckpoint(projectDir, name, opts = {}) {
 
   // Determine which files to restore
   const filesToRestore = opts.files
-    ? Object.entries(checkpoint.files).filter(([p]) => opts.files.includes(p))
+    ? Object.entries(checkpoint.files).filter(([p]) => opts.files!.includes(p))
     : Object.entries(checkpoint.files);
 
   let filesRestored = 0;
@@ -222,11 +227,11 @@ export function restoreCheckpoint(projectDir, name, opts = {}) {
  * Returns { added, modified, deleted } arrays of file paths.
  * If opts.file is set, returns the file content from the checkpoint instead.
  */
-export function diffCheckpoint(projectDir, name, opts = {}) {
+export function diffCheckpoint(projectDir: string, name: string, opts: { file?: string } = {}): DiffResult {
   const vigilDir = join(projectDir, '.claude', 'vigil');
   const manifest = readManifest(vigilDir);
 
-  let checkpoint;
+  let checkpoint: Checkpoint | null | undefined;
   if (name === '~quicksave') {
     checkpoint = manifest.quicksave;
   } else {
@@ -242,16 +247,16 @@ export function diffCheckpoint(projectDir, name, opts = {}) {
   }
 
   // Full diff mode
-  const added = [];
-  const modified = [];
-  const deleted = [];
+  const added: string[] = [];
+  const modified: string[] = [];
+  const deleted: string[] = [];
   const ignorePatterns = parseVigilignore(projectDir);
 
   // Check current files against checkpoint
-  const currentFiles = new Set();
+  const currentFiles = new Set<string>();
   walkProject(projectDir, (relPath, buf) => {
     currentFiles.add(relPath);
-    const cpHash = checkpoint.files[relPath];
+    const cpHash = checkpoint!.files[relPath];
     if (!cpHash) {
       added.push(relPath);
     } else if (cpHash !== hashContent(buf)) {
@@ -274,11 +279,11 @@ export function diffCheckpoint(projectDir, name, opts = {}) {
  * List files in a checkpoint, optionally filtered by glob pattern.
  * Returns array of { path, size } objects.
  */
-export function listCheckpointFiles(projectDir, name, glob) {
+export function listCheckpointFiles(projectDir: string, name: string, glob?: string): ListResult {
   const vigilDir = join(projectDir, '.claude', 'vigil');
   const manifest = readManifest(vigilDir);
 
-  let checkpoint;
+  let checkpoint: Checkpoint | null | undefined;
   if (name === '~quicksave') {
     checkpoint = manifest.quicksave;
   } else {
@@ -291,7 +296,7 @@ export function listCheckpointFiles(projectDir, name, glob) {
   // Simple glob filtering: supports "src/auth/**" and "*.ts" patterns
   if (glob) {
     const globPrefix = glob.replace(/\*\*.*$/, '');
-    const globSuffix = glob.includes('*') ? glob.split('*').pop() : null;
+    const globSuffix = glob.includes('*') ? glob.split('*').pop()! : null;
     files = files.filter(f => {
       if (globPrefix && !f.startsWith(globPrefix)) return false;
       if (globSuffix && !f.endsWith(globSuffix)) return false;
@@ -310,7 +315,7 @@ export function listCheckpointFiles(projectDir, name, glob) {
  * Delete a checkpoint by name. Runs GC to reclaim unreferenced objects.
  * Returns { deleted, gc }.
  */
-export function deleteCheckpoint(projectDir, name, opts = {}) {
+export function deleteCheckpoint(projectDir: string, name?: string, opts: { all?: boolean } = {}): DeleteResult {
   const vigilDir = join(projectDir, '.claude', 'vigil');
   const manifest = readManifest(vigilDir);
 
@@ -324,11 +329,11 @@ export function deleteCheckpoint(projectDir, name, opts = {}) {
   }
 
   const idx = manifest.checkpoints.findIndex(c => c.name === name);
-  if (idx === -1) return { error: 'not_found', name };
+  if (idx === -1) return { error: 'not_found', name: name! };
 
   manifest.checkpoints.splice(idx, 1);
   writeManifest(vigilDir, manifest);
   const gc = gcObjects(vigilDir, manifest);
   const usage = diskUsage(vigilDir);
-  return { deleted: name, gc, usage };
+  return { deleted: name!, gc, usage };
 }

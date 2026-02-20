@@ -3,13 +3,15 @@
   "version": "0.1.0",
   "description": "Checkpoint, snapshot, and file recovery MCP server for Claude Code",
   "type": "module",
-  "main": "src/index.js",
+  "main": "dist/src/index.js",
   "bin": {
-    "claude-vigil-mcp": "src/index.js"
+    "claude-vigil-mcp": "dist/src/index.js"
   },
   "scripts": {
-    "start": "node src/index.js",
-    "test": "node --test test/index.test.js"
+    "build": "tsc",
+    "prebuild": "rm -rf dist",
+    "start": "node dist/src/index.js",
+    "test": "npm run build && node --test dist/test/index.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
@@ -30,5 +32,9 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/Vvkmnn/claude-vigil-mcp"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "typescript": "^5.9.3"
   }
 }
