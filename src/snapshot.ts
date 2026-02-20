@@ -3,12 +3,12 @@
 
 import {
   readFileSync, writeFileSync, mkdirSync, existsSync,
-  readdirSync, statSync, unlinkSync, rmSync
+  readdirSync, statSync, unlinkSync, rmSync, copyFileSync, renameSync
 } from 'node:fs';
 import { join, relative, dirname } from 'node:path';
 import { hashContent, storeObject, readObject, gcObjects, diskUsage } from './store.js';
 import type {
-  Manifest, Checkpoint, CheckpointFiles,
+  Manifest, Checkpoint, CheckpointFiles, FileChange, SearchHit, DisplacedFile,
   CreateCheckpointResult, RestoreResult, DiffResult, ListResult, DeleteResult,
   WalkCallback
 } from './types.js';
@@ -232,13 +232,137 @@ export function walkProject(projectDir: string, callback: WalkCallback, ignorePa
   walk(projectDir);
 }
 
+// ── Unified diff generation ───────────────────────────────────────
+
+/** Check if content is binary by looking for null bytes in the first 8KB. */
+function isBinary(buf: Buffer): boolean {
+  const len = Math.min(buf.length, 8192);
+  for (let i = 0; i < len; i++) {
+    if (buf[i] === 0) return true;
+  }
+  return false;
+}
+
+/**
+ * Generate a unified diff between two strings.
+ * LCS-based, zero dependencies. Returns standard format with @@ headers.
+ */
+export function generateUnifiedDiff(oldContent: string, newContent: string, filePath: string): string {
+  const oldLines = oldContent.split('\n');
+  const newLines = newContent.split('\n');
+  const n = oldLines.length;
+  const m = newLines.length;
+
+  // Build LCS table (O(n*m) space — fine for source files)
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      dp[i][j] = oldLines[i - 1] === newLines[j - 1]
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+
+  // Backtrack to get edit script: 'keep' | 'delete' | 'insert'
+  type Edit = { type: 'keep' | 'delete' | 'insert'; oldIdx: number; newIdx: number; line: string };
+  const edits: Edit[] = [];
+  let i = n, j = m;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+      edits.push({ type: 'keep', oldIdx: i - 1, newIdx: j - 1, line: oldLines[i - 1] });
+      i--; j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      edits.push({ type: 'insert', oldIdx: i - 1, newIdx: j - 1, line: newLines[j - 1] });
+      j--;
+    } else {
+      edits.push({ type: 'delete', oldIdx: i - 1, newIdx: -1, line: oldLines[i - 1] });
+      i--;
+    }
+  }
+  edits.reverse();
+
+  // Group into hunks with 3 lines of context
+  const CONTEXT = 3;
+  type Hunk = { oldStart: number; oldCount: number; newStart: number; newCount: number; lines: string[] };
+  const hunks: Hunk[] = [];
+  let hunk: Hunk | null = null;
+  let lastChangeIdx = -999;
+
+  let oldLine = 0, newLine = 0;
+  for (let e = 0; e < edits.length; e++) {
+    const edit = edits[e];
+    const isChange = edit.type !== 'keep';
+
+    if (isChange) {
+      // Start a new hunk if this change is far from the last one
+      if (e - lastChangeIdx > CONTEXT * 2 + 1 || !hunk) {
+        // Flush previous hunk
+        if (hunk) hunks.push(hunk);
+        // Start new hunk with leading context
+        const contextStart = Math.max(0, e - CONTEXT);
+        hunk = { oldStart: 0, oldCount: 0, newStart: 0, newCount: 0, lines: [] };
+        // Recount positions for the context start
+        let oPos = 0, nPos = 0;
+        for (let k = 0; k < contextStart; k++) {
+          if (edits[k].type === 'keep' || edits[k].type === 'delete') oPos++;
+          if (edits[k].type === 'keep' || edits[k].type === 'insert') nPos++;
+        }
+        hunk.oldStart = oPos + 1;
+        hunk.newStart = nPos + 1;
+        // Add leading context lines
+        for (let k = contextStart; k < e; k++) {
+          if (edits[k].type === 'keep') {
+            hunk.lines.push(' ' + edits[k].line);
+            hunk.oldCount++;
+            hunk.newCount++;
+          }
+        }
+      }
+      lastChangeIdx = e;
+    }
+
+    if (!hunk) continue;
+
+    if (isChange) {
+      if (edit.type === 'delete') {
+        hunk.lines.push('-' + edit.line);
+        hunk.oldCount++;
+      } else {
+        hunk.lines.push('+' + edit.line);
+        hunk.newCount++;
+      }
+    } else {
+      // Context line — only include if within CONTEXT of a change
+      if (e - lastChangeIdx <= CONTEXT) {
+        hunk.lines.push(' ' + edit.line);
+        hunk.oldCount++;
+        hunk.newCount++;
+      }
+    }
+
+    if (edit.type === 'keep' || edit.type === 'delete') oldLine++;
+    if (edit.type === 'keep' || edit.type === 'insert') newLine++;
+  }
+  if (hunk) hunks.push(hunk);
+
+  if (hunks.length === 0) return '';
+
+  // Format
+  const out: string[] = [`--- a/${filePath}`, `+++ b/${filePath}`];
+  for (const h of hunks) {
+    out.push(`@@ -${h.oldStart},${h.oldCount} +${h.newStart},${h.newCount} @@`);
+    out.push(...h.lines);
+  }
+  return out.join('\n');
+}
+
 // ── Checkpoint operations ─────────────────────────────────────────
 
 /**
  * Create a named checkpoint. Walks project, hashes + stores every file.
  * Returns { name, type, created, fileCount, newObjects }.
  */
-export function createCheckpoint(projectDir: string, name: string, type: string = 'manual'): CreateCheckpointResult {
+export function createCheckpoint(projectDir: string, name: string, type: string = 'manual', description?: string): CreateCheckpointResult {
   const vigilDir = join(projectDir, '.claude', 'vigil');
   mkdirSync(join(vigilDir, 'objects'), { recursive: true });
 
@@ -294,7 +418,8 @@ export function createCheckpoint(projectDir: string, name: string, type: string 
     type,
     created: new Date().toISOString(),
     files,
-    fileCount
+    fileCount,
+    ...(description ? { description } : {}),
   };
   manifest.checkpoints.push(checkpoint);
   writeManifest(vigilDir, manifest);
@@ -303,86 +428,230 @@ export function createCheckpoint(projectDir: string, name: string, type: string 
   return { name, type, created: checkpoint.created, fileCount, newObjects, usage };
 }
 
+/** Format a timestamp for artifact directory names. Includes milliseconds for uniqueness. */
+function artifactTimestamp(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const ms = String(d.getMilliseconds()).padStart(3, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}_${ms}`;
+}
+
 /**
- * Restore a checkpoint. Quicksaves current state first (emulator pattern).
- * opts.files: array of specific file paths to restore (selective).
- * Returns { restored, quicksaved, filesRestored }.
+ * Restore a checkpoint. Always restores the ENTIRE codebase (no selective file restore).
+ * Quicksaves current state first (emulator pattern).
+ *
+ * No data loss: modified and new files are preserved in .claude/vigil/artifacts/
+ * before being overwritten or moved. Artifacts are never touched by save/restore.
  */
-export function restoreCheckpoint(projectDir: string, name: string, opts: { files?: string[] } = {}): RestoreResult {
+export function restoreCheckpoint(projectDir: string, name: string): RestoreResult {
   const vigilDir = join(projectDir, '.claude', 'vigil');
   const manifest = readManifest(vigilDir);
 
   // Find the checkpoint
-  let checkpoint: Checkpoint | null | undefined;
-  if (name === '~quicksave') {
-    checkpoint = manifest.quicksave;
-  } else {
-    checkpoint = manifest.checkpoints.find(c => c.name === name);
-  }
+  const checkpoint = findCheckpoint(manifest, name);
   if (!checkpoint) return { error: 'not_found', name };
 
   // Quicksave current state before restoring (emulator pattern)
   createCheckpoint(projectDir, '~quicksave', 'quicksave');
 
-  // Determine which files to restore
-  const filesToRestore = opts.files
-    ? Object.entries(checkpoint.files).filter(([p]) => opts.files!.includes(p))
-    : Object.entries(checkpoint.files);
+  // Create artifacts directory for displaced files
+  const ts = artifactTimestamp();
+  const artifactsDirName = `restored_${name}_${ts}`;
+  const artifactsDir = join(vigilDir, 'artifacts', artifactsDirName);
+  mkdirSync(artifactsDir, { recursive: true });
 
+  const ignorePatterns = parseVigilignore(projectDir);
+  const checkpointPaths = new Set(Object.keys(checkpoint.files));
+  const displaced: DisplacedFile[] = [];
+
+  // Phase 1: Walk project to find modified and new files, preserve them
+  walkProject(projectDir, (relPath, buf) => {
+    const cpHash = checkpoint!.files[relPath];
+    const fullPath = join(projectDir, relPath);
+    const artifactPath = join(artifactsDir, relPath);
+
+    if (!cpHash) {
+      // New file (not in checkpoint) — move to artifacts
+      mkdirSync(dirname(artifactPath), { recursive: true });
+      try {
+        renameSync(fullPath, artifactPath);
+      } catch {
+        // Cross-device rename fails — fall back to copy+delete
+        copyFileSync(fullPath, artifactPath);
+        unlinkSync(fullPath);
+      }
+      displaced.push({ path: relPath, reason: 'new' });
+    } else if (cpHash !== hashContent(buf)) {
+      // Modified file — copy current version to artifacts before overwriting
+      mkdirSync(dirname(artifactPath), { recursive: true });
+      copyFileSync(fullPath, artifactPath);
+      displaced.push({ path: relPath, reason: 'modified' });
+    }
+  }, ignorePatterns);
+
+  // Phase 2: Restore all files from checkpoint
   let filesRestored = 0;
-  for (const [relPath, hash] of filesToRestore) {
+  for (const [relPath, hash] of Object.entries(checkpoint.files)) {
     const fullPath = join(projectDir, relPath);
     mkdirSync(dirname(fullPath), { recursive: true });
     writeFileSync(fullPath, readObject(vigilDir, hash));
     filesRestored++;
   }
 
-  // If full restore (not selective), remove files that exist now but weren't in checkpoint
-  if (!opts.files) {
-    const ignorePatterns = parseVigilignore(projectDir);
-    const checkpointPaths = new Set(Object.keys(checkpoint.files));
-    walkProject(projectDir, (relPath) => {
-      if (!checkpointPaths.has(relPath)) {
-        try { unlinkSync(join(projectDir, relPath)); } catch { /* skip */ }
-      }
-    }, ignorePatterns);
+  // Clean up artifacts dir if nothing was displaced
+  if (displaced.length === 0) {
+    try { rmSync(artifactsDir, { recursive: true }); } catch { /* fine */ }
   }
 
   const usage = diskUsage(vigilDir);
-  return { restored: name, quicksaved: true, filesRestored, usage };
+  const artifactsRelDir = displaced.length > 0
+    ? `.claude/vigil/artifacts/${artifactsDirName}`
+    : '';
+  return { restored: name, quicksaved: true, filesRestored, artifactsDir: artifactsRelDir, displaced, usage };
+}
+
+/** Look up a checkpoint by name in the manifest. */
+function findCheckpoint(manifest: Manifest, name: string): Checkpoint | null {
+  if (name === '~quicksave') return manifest.quicksave ?? null;
+  return manifest.checkpoints.find(c => c.name === name) ?? null;
+}
+
+/** Build a FileChange from old and new content for a file. */
+function buildFileChange(vigilDir: string, relPath: string, cpHash: string, currentBuf: Buffer): FileChange {
+  const cpBuf = readObject(vigilDir, cpHash);
+  if (isBinary(cpBuf) || isBinary(currentBuf)) {
+    return { path: relPath, diff: '', binary: true, linesAdded: 0, linesRemoved: 0 };
+  }
+  const oldContent = cpBuf.toString('utf8');
+  const newContent = currentBuf.toString('utf8');
+  const diff = generateUnifiedDiff(oldContent, newContent, relPath);
+  const linesAdded = (diff.match(/^\+[^+]/gm) || []).length;
+  const linesRemoved = (diff.match(/^-[^-]/gm) || []).length;
+  return { path: relPath, diff, binary: false, linesAdded, linesRemoved };
 }
 
 /**
- * Diff current project against a checkpoint.
- * Returns { added, modified, deleted } arrays of file paths.
- * If opts.file is set, returns the file content from the checkpoint instead.
+ * Diff current project against a checkpoint (or two checkpoints against each other).
+ *
+ * Modes:
+ *   - Full diff:   diffCheckpoint(dir, name) → { added, modified: FileChange[], deleted }
+ *   - Summary:     diffCheckpoint(dir, name, { summary: true }) → same but no diffs in FileChange
+ *   - Single file: diffCheckpoint(dir, name, { file }) → { file, checkpoint, content, diff }
+ *   - Against:     diffCheckpoint(dir, name, { against }) → diff checkpoint vs checkpoint
+ *   - Search:      diffCheckpoint(dir, "*", { file, search }) → { search, file, hits }
  */
-export function diffCheckpoint(projectDir: string, name: string, opts: { file?: string } = {}): DiffResult {
+export function diffCheckpoint(
+  projectDir: string,
+  name: string,
+  opts: { file?: string; summary?: boolean; against?: string; search?: string } = {}
+): DiffResult {
   const vigilDir = join(projectDir, '.claude', 'vigil');
   const manifest = readManifest(vigilDir);
 
-  let checkpoint: Checkpoint | null | undefined;
-  if (name === '~quicksave') {
-    checkpoint = manifest.quicksave;
-  } else {
-    checkpoint = manifest.checkpoints.find(c => c.name === name);
+  // Search mode: scan all checkpoints for a string in a specific file
+  if (name === '*' && opts.file && opts.search) {
+    const hits: SearchHit[] = [];
+    const allCheckpoints = [...manifest.checkpoints];
+    if (manifest.quicksave) allCheckpoints.push(manifest.quicksave);
+
+    for (const cp of allCheckpoints) {
+      const hash = cp.files[opts.file];
+      if (!hash) continue;
+      const buf = readObject(vigilDir, hash);
+      if (isBinary(buf)) continue;
+      const content = buf.toString('utf8');
+      const lines = content.split('\n');
+      const matchingLines: string[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes(opts.search!)) {
+          // Include 2 lines of context around match
+          const start = Math.max(0, i - 2);
+          const end = Math.min(lines.length - 1, i + 2);
+          for (let k = start; k <= end; k++) {
+            const prefix = k === i ? '>' : ' ';
+            const lineRef = `${prefix} ${k + 1}: ${lines[k]}`;
+            if (!matchingLines.includes(lineRef)) matchingLines.push(lineRef);
+          }
+        }
+      }
+      if (matchingLines.length > 0) {
+        hits.push({ checkpoint: cp.name, created: cp.created, lines: matchingLines });
+      }
+    }
+    return { search: opts.search!, file: opts.file, hits };
   }
+
+  const checkpoint = findCheckpoint(manifest, name);
   if (!checkpoint) return { error: 'not_found', name };
 
-  // Single file retrieval mode
+  // Single file retrieval mode — returns content + diff vs current
   if (opts.file) {
     const hash = checkpoint.files[opts.file];
     if (!hash) return { error: 'file_not_found', file: opts.file, checkpoint: name };
-    return { file: opts.file, checkpoint: name, content: readObject(vigilDir, hash).toString('utf8') };
+    const cpBuf = readObject(vigilDir, hash);
+    const content = cpBuf.toString('utf8');
+
+    // Also generate diff against current version if it exists
+    const currentPath = join(projectDir, opts.file);
+    let diff: string | undefined;
+    if (existsSync(currentPath)) {
+      const currentBuf = readFileSync(currentPath);
+      if (!isBinary(cpBuf) && !isBinary(currentBuf)) {
+        diff = generateUnifiedDiff(content, currentBuf.toString('utf8'), opts.file);
+      }
+    }
+    return { file: opts.file, checkpoint: name, content, diff };
   }
 
-  // Full diff mode
+  // Checkpoint-vs-checkpoint mode
+  if (opts.against) {
+    const other = findCheckpoint(manifest, opts.against);
+    if (!other) return { error: 'not_found', name: opts.against };
+
+    const added: string[] = [];
+    const modified: FileChange[] = [];
+    const deleted: string[] = [];
+
+    const baseFiles = new Set(Object.keys(checkpoint.files));
+    const otherFiles = new Set(Object.keys(other.files));
+
+    // Files in "other" but not in "base" = added
+    for (const relPath of otherFiles) {
+      if (!baseFiles.has(relPath)) added.push(relPath);
+    }
+
+    // Files in both but different hashes = modified
+    for (const relPath of baseFiles) {
+      if (!otherFiles.has(relPath)) {
+        deleted.push(relPath);
+      } else if (checkpoint.files[relPath] !== other.files[relPath]) {
+        if (opts.summary) {
+          modified.push({ path: relPath, diff: '', binary: false, linesAdded: 0, linesRemoved: 0 });
+        } else {
+          const oldBuf = readObject(vigilDir, checkpoint.files[relPath]);
+          const newBuf = readObject(vigilDir, other.files[relPath]);
+          if (isBinary(oldBuf) || isBinary(newBuf)) {
+            modified.push({ path: relPath, diff: '', binary: true, linesAdded: 0, linesRemoved: 0 });
+          } else {
+            const diff = generateUnifiedDiff(oldBuf.toString('utf8'), newBuf.toString('utf8'), relPath);
+            const linesAdded = (diff.match(/^\+[^+]/gm) || []).length;
+            const linesRemoved = (diff.match(/^-[^-]/gm) || []).length;
+            modified.push({ path: relPath, diff, binary: false, linesAdded, linesRemoved });
+          }
+        }
+      }
+    }
+
+    const usage = diskUsage(vigilDir);
+    return { added, modified, deleted, usage };
+  }
+
+  // Full diff mode: checkpoint vs current working directory
   const added: string[] = [];
-  const modified: string[] = [];
+  const modified: FileChange[] = [];
   const deleted: string[] = [];
   const ignorePatterns = parseVigilignore(projectDir);
 
-  // Check current files against checkpoint
   const currentFiles = new Set<string>();
   walkProject(projectDir, (relPath, buf) => {
     currentFiles.add(relPath);
@@ -390,12 +659,15 @@ export function diffCheckpoint(projectDir: string, name: string, opts: { file?: 
     if (!cpHash) {
       added.push(relPath);
     } else if (cpHash !== hashContent(buf)) {
-      modified.push(relPath);
+      if (opts.summary) {
+        modified.push({ path: relPath, diff: '', binary: false, linesAdded: 0, linesRemoved: 0 });
+      } else {
+        modified.push(buildFileChange(vigilDir, relPath, cpHash, buf));
+      }
     }
   }, ignorePatterns);
 
-  // Check checkpoint files not in current project
-  for (const relPath of Object.keys(checkpoint.files)) {
+  for (const relPath of Object.keys(checkpoint!.files)) {
     if (!currentFiles.has(relPath)) {
       deleted.push(relPath);
     }
@@ -425,7 +697,7 @@ export function listCheckpointFiles(projectDir: string, name: string, glob?: str
 
   // Simple glob filtering: supports "src/auth/**" and "*.ts" patterns
   if (glob) {
-    const globPrefix = glob.replace(/\*\*.*$/, '');
+    const globPrefix = glob.replace(/\*.*$/, '');
     const globSuffix = glob.includes('*') ? glob.split('*').pop()! : null;
     files = files.filter(f => {
       if (globPrefix && !f.startsWith(globPrefix)) return false;

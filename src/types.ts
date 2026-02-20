@@ -12,6 +12,7 @@ export interface Checkpoint {
   created: string; // ISO 8601
   files: CheckpointFiles;
   fileCount: number;
+  description?: string;
 }
 
 export interface ManifestConfig {
@@ -44,15 +45,45 @@ export type CreateCheckpointResult =
   | { error: 'slots_full'; max: number; checkpoints: { name: string; created: string }[] }
   | { error: 'duplicate_name'; name: string };
 
+// Per-file info about what was displaced during restore
+export interface DisplacedFile {
+  path: string;
+  reason: 'modified' | 'new'; // 'modified' = overwritten from checkpoint, 'new' = not in checkpoint
+}
+
 export type RestoreResult =
   | { error: 'not_found'; name: string }
-  | { restored: string; quicksaved: boolean; filesRestored: number; usage: DiskUsage };
+  | {
+      restored: string;
+      quicksaved: boolean;
+      filesRestored: number;
+      artifactsDir: string;       // relative path to artifacts directory
+      displaced: DisplacedFile[]; // files preserved in artifacts
+      usage: DiskUsage;
+    };
+
+// Per-file change info returned in full diff mode
+export interface FileChange {
+  path: string;
+  diff: string;        // unified diff (empty for binary files)
+  binary: boolean;     // true if binary file (no diff available)
+  linesAdded: number;
+  linesRemoved: number;
+}
+
+// Search result when scanning across all checkpoints
+export interface SearchHit {
+  checkpoint: string;
+  created: string;
+  lines: string[];     // matching lines with surrounding context
+}
 
 export type DiffResult =
   | { error: 'not_found'; name: string }
   | { error: 'file_not_found'; file: string; checkpoint: string }
-  | { file: string; checkpoint: string; content: string }
-  | { added: string[]; modified: string[]; deleted: string[]; usage: DiskUsage };
+  | { file: string; checkpoint: string; content: string; diff?: string }
+  | { added: string[]; modified: FileChange[]; deleted: string[]; usage: DiskUsage }
+  | { search: string; file: string; hits: SearchHit[] };
 
 export type ListResult =
   | { error: string; name?: string }

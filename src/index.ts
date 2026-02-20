@@ -5,7 +5,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -77,13 +77,14 @@ const server = new McpServer({ name: 'claude-vigil-mcp', version: '0.1.0' });
 
 server.tool(
   'vigil_save',
-  'Create a named checkpoint of the entire project. Runs in background — returns immediately.',
+  'Create a named checkpoint of the entire project. Runs in background — returns immediately. If slots are full, DO NOT auto-retry — ask the user whether to delete an existing checkpoint or increase capacity.',
   {
     name: z.string().describe('Checkpoint name (e.g., "before-refactor", "v1.0")'),
+    description: z.string().optional().describe('What this checkpoint captures (shown in vigil_list)'),
     max_checkpoints: z.number().int().min(1).max(50).optional()
       .describe('Increase the maximum number of checkpoint slots (default: 3)')
   },
-  async ({ name, max_checkpoints }) => {
+  async ({ name, description, max_checkpoints }) => {
     const projectDir = getProjectDir();
     const vigilDir = join(projectDir, '.claude', 'vigil');
     const manifest = readManifest(vigilDir);
@@ -101,7 +102,7 @@ server.tool(
     if (manifest.checkpoints.length >= max) {
       const names = manifest.checkpoints.map(c => `${c.name} (${timeAgo(c.created)})`).join(' \u00B7 ');
       return { content: [{ type: 'text' as const, text:
-        fmt(`${max}/${max} full`, [names, `delete one with vigil_delete, or increase capacity with max_checkpoints param`], projectDir)
+        fmt(`${max}/${max} full — ask the user before proceeding`, [names, `ASK the user: delete one with vigil_delete, or increase capacity with max_checkpoints?`], projectDir)
       }] };
     }
 
@@ -123,7 +124,7 @@ server.tool(
     }
 
     // Synchronous snapshot — confirmed before returning
-    const result = createCheckpoint(projectDir, name, 'manual');
+    const result = createCheckpoint(projectDir, name, 'manual', description);
     if ('error' in result) {
       return { content: [{ type: 'text' as const, text:
         fmt(`error: ${result.error}`, null, projectDir)
@@ -189,7 +190,8 @@ server.tool(
 
     const lines: string[] = manifest.checkpoints.map(c => {
       const age = timeAgo(c.created);
-      return `${c.name}${' '.repeat(Math.max(1, 20 - c.name.length))}${age}${' '.repeat(Math.max(1, 10 - age.length))}${c.fileCount} files`;
+      const base = `${c.name}${' '.repeat(Math.max(1, 20 - c.name.length))}${age}${' '.repeat(Math.max(1, 10 - age.length))}${c.fileCount} files`;
+      return c.description ? `${base}\n${' '.repeat(3)}\u2503 ${c.description}` : base;
     });
     if (manifest.quicksave) {
       lines.push(`~quicksave${' '.repeat(9)}${timeAgo(manifest.quicksave.created)}`);
@@ -208,51 +210,86 @@ server.tool(
 
 server.tool(
   'vigil_diff',
-  'Compare current project to a checkpoint. With file: retrieve that file\'s content from the checkpoint.',
+  'Search and investigate previous versions of your codebase. Compare checkpoint vs current working directory (with full unified diffs), compare two checkpoints against each other, retrieve any file\'s content from any checkpoint, or search for a string across all checkpoints to find when code existed. Use this to find previous versions of files or functions, understand what changed, and pull out whatever snippets or diffs are needed — then apply selectively with Edit.',
   {
-    name: z.string().describe('Checkpoint name to diff against'),
-    file: z.string().optional().describe('Specific file to retrieve from checkpoint (returns content)')
+    name: z.string().describe('Checkpoint name to diff against (use "*" with file+search to scan all checkpoints)'),
+    file: z.string().optional().describe('Specific file to retrieve from checkpoint (returns content + diff vs current)'),
+    summary: z.boolean().optional().describe('Return file list only without content diffs (faster for large changesets)'),
+    against: z.string().optional().describe('Compare against another checkpoint instead of current working directory'),
+    search: z.string().optional().describe('Search for this string across all checkpoints (requires name="*" and file)')
   },
-  async ({ name, file }) => {
+  async ({ name, file, summary, against, search }) => {
     const projectDir = getProjectDir();
-    const result = diffCheckpoint(projectDir, name, { file });
+    const result = diffCheckpoint(projectDir, name, { file, summary, against, search });
 
     if ('error' in result) {
       if (result.error === 'not_found') {
-        return { content: [{ type: 'text' as const, text: fmt(`"${name}" not found`, null, projectDir) }] };
+        return { content: [{ type: 'text' as const, text: fmt(`"${result.name}" not found`, null, projectDir) }] };
       }
       if (result.error === 'file_not_found') {
         return { content: [{ type: 'text' as const, text: fmt(`"${file}" not in "${name}"`, null, projectDir) }] };
       }
     }
 
-    // Single file retrieval — header + raw content
-    if ('content' in result) {
+    // Search results
+    if ('search' in result) {
+      if (result.hits.length === 0) {
+        return { content: [{ type: 'text' as const, text:
+          fmt(`"${result.search}" not found in ${result.file} across any checkpoint`, null, projectDir)
+        }] };
+      }
+      const lines: string[] = [];
+      for (const hit of result.hits) {
+        lines.push(`${hit.checkpoint} (${timeAgo(hit.created)})`);
+        for (const line of hit.lines) lines.push(`  ${line}`);
+      }
       return { content: [{ type: 'text' as const, text:
-        `\u{1F3FA} \u2501\u2501 ${file} from ${name} \u2501\u2501\n${result.content}`
+        fmt(`"${result.search}" in ${result.file} \u2501\u2501 ${result.hits.length} checkpoint${result.hits.length !== 1 ? 's' : ''}`, lines, projectDir)
       }] };
     }
 
-    // Full diff
-    if ('added' in result) {
-      const lines: string[] = [];
-      for (const f of result.modified) lines.push(`modified  ${f}`);
-      for (const f of result.added) lines.push(`added     ${f}`);
-      for (const f of result.deleted) lines.push(`deleted   ${f}`);
-      const total = result.modified.length + result.added.length + result.deleted.length;
+    // Single file retrieval — content + diff vs current
+    if ('content' in result) {
+      let text = `\u{1F3FA} \u2501\u2501 ${file} from ${name} \u2501\u2501\n${result.content}`;
+      if (result.diff) {
+        text += `\n\n\u2501\u2501 diff vs current \u2501\u2501\n${result.diff}`;
+      }
+      return { content: [{ type: 'text' as const, text }] };
+    }
 
+    // Full diff (checkpoint vs current or checkpoint vs checkpoint)
+    if ('added' in result) {
+      const total = result.modified.length + result.added.length + result.deleted.length;
       if (total === 0) {
+        const target = against ? `"${name}" vs "${against}"` : `"${name}"`;
         return { content: [{ type: 'text' as const, text:
-          fmt(`no changes vs "${name}"`, null, projectDir)
+          fmt(`no changes vs ${target}`, null, projectDir)
         }] };
       }
 
-      return { content: [{ type: 'text' as const, text:
-        fmt(`${total} change${total !== 1 ? 's' : ''} vs ${name}`, lines, projectDir)
-      }] };
+      const lines: string[] = [];
+      for (const f of result.modified) {
+        const stats = f.binary ? '(binary)' : `(+${f.linesAdded} -${f.linesRemoved})`;
+        lines.push(`modified  ${f.path} ${stats}`);
+      }
+      for (const f of result.added) lines.push(`added     ${f}`);
+      for (const f of result.deleted) lines.push(`deleted   ${f}`);
+
+      const target = against ? `${name} vs ${against}` : name;
+      let text = fmt(`${total} change${total !== 1 ? 's' : ''} vs ${target}`, lines, projectDir);
+
+      // Append per-file diffs (unless summary mode)
+      if (!summary) {
+        for (const f of result.modified) {
+          if (f.diff) {
+            text += `\n\n\u2501\u2501 ${f.path} \u2501\u2501\n${f.diff}`;
+          }
+        }
+      }
+
+      return { content: [{ type: 'text' as const, text }] };
     }
 
-    // Fallback (shouldn't reach here)
     return { content: [{ type: 'text' as const, text: fmt('unexpected result', null, projectDir) }] };
   }
 );
@@ -261,33 +298,59 @@ server.tool(
 
 server.tool(
   'vigil_restore',
-  'Restore project to a checkpoint state. Quicksaves current state first. Optionally restore specific files only.',
+  'Restore project to a checkpoint state. Quicksaves current state first. Displaced files (modified + new) are preserved in .claude/vigil/artifacts/ — nothing is ever deleted. For individual file/function restores, use vigil_diff to get the content and apply with Edit.',
   {
-    name: z.string().describe('Checkpoint name to restore'),
-    files: z.array(z.string()).optional().describe('Specific files to restore (omit for full restore)')
+    name: z.string().describe('Checkpoint name to restore')
   },
-  async ({ name, files }) => {
+  async ({ name }) => {
     const projectDir = getProjectDir();
-    const result = restoreCheckpoint(projectDir, name, { files });
+    const result = restoreCheckpoint(projectDir, name);
 
     if ('error' in result) {
       return { content: [{ type: 'text' as const, text: fmt(`"${name}" not found`, null, projectDir) }] };
     }
 
-    const detail = files
-      ? `${result.filesRestored} file${result.filesRestored !== 1 ? 's' : ''}`
-      : `${result.filesRestored} files (full)`;
-
-    // Report skipped dirs so the calling model knows what needs regenerating
+    // Report what happened + safety info
     const skipped = detectSkippedDirs(projectDir);
     const lines: string[] = [];
+
+    // Displaced files info
+    if (result.displaced.length > 0) {
+      lines.push(`preserved ${result.displaced.length} displaced file${result.displaced.length !== 1 ? 's' : ''} in ${result.artifactsDir}`);
+      const modified = result.displaced.filter(d => d.reason === 'modified');
+      const newFiles = result.displaced.filter(d => d.reason === 'new');
+      if (modified.length > 0) {
+        for (const d of modified.slice(0, 10)) lines.push(`  modified: ${d.path} (current version saved)`);
+        if (modified.length > 10) lines.push(`  ... and ${modified.length - 10} more modified files`);
+      }
+      if (newFiles.length > 0) {
+        for (const d of newFiles.slice(0, 10)) lines.push(`  new: ${d.path} (moved, not in checkpoint)`);
+        if (newFiles.length > 10) lines.push(`  ... and ${newFiles.length - 10} more new files`);
+      }
+      lines.push(`review ${result.artifactsDir} — delete when no longer needed`);
+    } else {
+      lines.push('no displaced files (working directory matched checkpoint)');
+    }
+
+    lines.push('previous state also quicksaved (use ~quicksave to undo)');
+
     if (skipped.length > 0) {
       lines.push(`not restored (derived): ${skipped.join(', ')}`);
       lines.push('rebuild these before running the project');
     }
+    lines.push('for individual file/function restores, use vigil_diff to search previous versions and apply with Edit');
+
+    // Remind about artifact cleanup when they accumulate
+    const artifactsBase = join(projectDir, '.claude', 'vigil', 'artifacts');
+    if (existsSync(artifactsBase)) {
+      const artifactDirs = readdirSync(artifactsBase, { withFileTypes: true }).filter(e => e.isDirectory());
+      if (artifactDirs.length >= 3) {
+        lines.push(`note: ${artifactDirs.length} artifact directories in .claude/vigil/artifacts/ — review and clean up old ones if no longer needed`);
+      }
+    }
 
     return { content: [{ type: 'text' as const, text:
-      fmt(`restored from "${name}" \u2501\u2501 ${detail} \u00B7 quicksaved first`, lines.length > 0 ? lines : null, projectDir)
+      fmt(`restored from "${name}" \u2501\u2501 ${result.filesRestored} files`, lines, projectDir)
     }] };
   }
 );
