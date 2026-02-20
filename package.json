@@ -4,14 +4,22 @@
   "description": "Checkpoint, snapshot, and file recovery MCP server for Claude Code",
   "type": "module",
   "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
   "bin": {
     "claude-vigil-mcp": "dist/src/index.js"
   },
+  "files": ["dist", "hooks", "skills", "LICENSE", "README.md"],
   "scripts": {
     "build": "tsc",
     "prebuild": "rm -rf dist",
     "start": "node dist/src/index.js",
-    "test": "npm run build && node --test dist/test/index.test.js"
+    "test": "npm run build && node --test dist/test/index.test.js",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
@@ -29,12 +37,19 @@
     "claude-code"
   ],
   "license": "MIT",
+  "author": "Vvkmnn",
+  "homepage": "https://github.com/Vvkmnn/claude-vigil-mcp#readme",
+  "bugs": { "url": "https://github.com/Vvkmnn/claude-vigil-mcp/issues" },
   "repository": {
     "type": "git",
     "url": "https://github.com/Vvkmnn/claude-vigil-mcp"
   },
   "devDependencies": {
+    "@eslint/js": "^9.28.0",
     "@types/node": "^25.3.0",
-    "typescript": "^5.9.3"
+    "eslint": "^9.28.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.33.1"
   }
 }

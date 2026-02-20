@@ -1,29 +1,41 @@
 #!/usr/bin/env node
-// claude-vigil-mcp: Checkpoint, snapshot, and file recovery MCP server.
-// 5 tools: vigil_save, vigil_list, vigil_diff, vigil_restore, vigil_delete.
+/**
+ * MCP server entry point for claude-vigil-mcp.
+ *
+ * Exposes 5 tools over JSON-RPC via stdio:
+ *   - `vigil_save` — Create a named checkpoint of the entire project.
+ *   - `vigil_list` — List all checkpoints and disk usage, or drill into files.
+ *   - `vigil_diff` — Compare checkpoint vs working directory, two checkpoints, or search.
+ *   - `vigil_restore` — Restore project to a checkpoint state (with artifact preservation).
+ *   - `vigil_delete` — Delete a checkpoint and reclaim disk space via GC.
+ */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import {
-  readManifest, writeManifest, createCheckpoint, restoreCheckpoint,
-  diffCheckpoint, listCheckpointFiles, deleteCheckpoint,
-  detectDerivedDirs, detectSkippedDirs, writeVigilignore, hasVigilignore
+  readManifest,
+  writeManifest,
+  createCheckpoint,
+  restoreCheckpoint,
+  diffCheckpoint,
+  listCheckpointFiles,
+  deleteCheckpoint,
+  detectDerivedDirs,
+  writeVigilignore,
+  hasVigilignore,
 } from './snapshot.js';
 import { diskUsage } from './store.js';
-
-const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 // ── Formatting helpers ────────────────────────────────────────────
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (bytes < 1024 * 1024) return `${parseFloat((bytes / 1024).toFixed(1))} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${parseFloat((bytes / (1024 * 1024)).toFixed(1))} MB`;
+  return `${parseFloat((bytes / (1024 * 1024 * 1024)).toFixed(1))} GB`;
 }
 
 function timeAgo(isoDate: string): string {
@@ -54,10 +66,8 @@ function fmt(header: string, body: string[] | null | undefined, projectDir?: str
     return status ? `\u{1F3FA} \u2501\u2501 ${header} \u2501\u2501 ${status}` : `\u{1F3FA} \u2501\u2501 ${header}`;
   }
   const lines = body.filter(Boolean);
-  const top = status
-    ? `\u{1F3FA} \u250F\u2501 ${header} \u2501\u2501 ${status}`
-    : `\u{1F3FA} \u250F\u2501 ${header}`;
-  const mid = lines.slice(0, -1).map(l => `   \u2503 ${l}`);
+  const top = status ? `\u{1F3FA} \u250F\u2501 ${header} \u2501\u2501 ${status}` : `\u{1F3FA} \u250F\u2501 ${header}`;
+  const mid = lines.slice(0, -1).map((l) => `   \u2503 ${l}`);
   const bot = `   \u2517 ${lines[lines.length - 1]}`;
   return [top, ...mid, bot].join('\n');
 }
@@ -81,8 +91,13 @@ server.tool(
   {
     name: z.string().describe('Checkpoint name (e.g., "before-refactor", "v1.0")'),
     description: z.string().optional().describe('What this checkpoint captures (shown in vigil_list)'),
-    max_checkpoints: z.number().int().min(1).max(50).optional()
-      .describe('Increase the maximum number of checkpoint slots (default: 3)')
+    max_checkpoints: z
+      .number()
+      .int()
+      .min(1)
+      .max(50)
+      .optional()
+      .describe('Increase the maximum number of checkpoint slots (default: 3)'),
   },
   async ({ name, description, max_checkpoints }) => {
     const projectDir = getProjectDir();
@@ -100,10 +115,19 @@ server.tool(
 
     // Check slot limit
     if (manifest.checkpoints.length >= max) {
-      const names = manifest.checkpoints.map(c => `${c.name} (${timeAgo(c.created)})`).join(' \u00B7 ');
-      return { content: [{ type: 'text' as const, text:
-        fmt(`${max}/${max} full — ask the user before proceeding`, [names, `ASK the user: delete one with vigil_delete, or increase capacity with max_checkpoints?`], projectDir)
-      }] };
+      const names = manifest.checkpoints.map((c) => `${c.name} (${timeAgo(c.created)})`).join(' \u00B7 ');
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: fmt(
+              `${max}/${max} full — ask the user before proceeding`,
+              [names, `ASK the user: delete one with vigil_delete, or increase capacity with max_checkpoints?`],
+              projectDir,
+            ),
+          },
+        ],
+      };
     }
 
     // First save: auto-detect derived dirs from .gitignore + known patterns, create .vigilignore
@@ -117,18 +141,25 @@ server.tool(
     }
 
     // Check duplicate name
-    if (manifest.checkpoints.some(c => c.name === name)) {
-      return { content: [{ type: 'text' as const, text:
-        fmt(`"${name}" already exists \u2501\u2501 choose a different name or delete it first`, null, projectDir)
-      }] };
+    if (manifest.checkpoints.some((c) => c.name === name)) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: fmt(
+              `"${name}" already exists \u2501\u2501 choose a different name or delete it first`,
+              null,
+              projectDir,
+            ),
+          },
+        ],
+      };
     }
 
     // Synchronous snapshot — confirmed before returning
     const result = createCheckpoint(projectDir, name, 'manual', description);
     if ('error' in result) {
-      return { content: [{ type: 'text' as const, text:
-        fmt(`error: ${result.error}`, null, projectDir)
-      }] };
+      return { content: [{ type: 'text' as const, text: fmt(`error: ${result.error}`, null, projectDir) }] };
     }
     const saveHeader = `saved "${name}" \u2501\u2501 ${'fileCount' in result ? result.fileCount : 0} files \u00B7 ${'usage' in result ? formatBytes(result.usage.totalBytes) : ''}`;
 
@@ -143,10 +174,10 @@ server.tool(
       saveLines.push('edit .claude/vigil/.vigilignore to adjust');
     }
 
-    return { content: [{ type: 'text' as const, text:
-      fmt(saveHeader, saveLines.length > 0 ? saveLines : null, projectDir)
-    }] };
-  }
+    return {
+      content: [{ type: 'text' as const, text: fmt(saveHeader, saveLines.length > 0 ? saveLines : null, projectDir) }],
+    };
+  },
 );
 
 // ── vigil_list ────────────────────────────────────────────────────
@@ -156,7 +187,7 @@ server.tool(
   'List all checkpoints and disk usage. With name: list files inside that checkpoint.',
   {
     name: z.string().optional().describe('Checkpoint name to drill into (omit for overview)'),
-    glob: z.string().optional().describe('Glob pattern to filter files (e.g., "src/auth/**")')
+    glob: z.string().optional().describe('Glob pattern to filter files (e.g., "src/auth/**")'),
   },
   async ({ name, glob }) => {
     const projectDir = getProjectDir();
@@ -183,12 +214,17 @@ server.tool(
     const inProgress = existsSync(join(vigilDir, '.in-progress'));
 
     if (manifest.checkpoints.length === 0 && !manifest.quicksave && !inProgress) {
-      return { content: [{ type: 'text' as const, text:
-        fmt('no checkpoints yet \u2501\u2501 use vigil_save to create one', null, projectDir)
-      }] };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: fmt('no checkpoints yet \u2501\u2501 use vigil_save to create one', null, projectDir),
+          },
+        ],
+      };
     }
 
-    const lines: string[] = manifest.checkpoints.map(c => {
+    const lines: string[] = manifest.checkpoints.map((c) => {
       const age = timeAgo(c.created);
       const base = `${c.name}${' '.repeat(Math.max(1, 20 - c.name.length))}${age}${' '.repeat(Math.max(1, 10 - age.length))}${c.fileCount} files`;
       return c.description ? `${base}\n${' '.repeat(3)}\u2503 ${c.description}` : base;
@@ -203,20 +239,29 @@ server.tool(
     const count = manifest.checkpoints.length;
     const header = `${count} checkpoint${count !== 1 ? 's' : ''}`;
     return { content: [{ type: 'text' as const, text: fmt(header, lines.length ? lines : null, projectDir) }] };
-  }
+  },
 );
 
 // ── vigil_diff ────────────────────────────────────────────────────
 
 server.tool(
   'vigil_diff',
-  'Search and investigate previous versions of your codebase. Compare checkpoint vs current working directory (with full unified diffs), compare two checkpoints against each other, retrieve any file\'s content from any checkpoint, or search for a string across all checkpoints to find when code existed. Use this to find previous versions of files or functions, understand what changed, and pull out whatever snippets or diffs are needed — then apply selectively with Edit.',
+  "Search and investigate previous versions of your codebase. Compare checkpoint vs current working directory (with full unified diffs), compare two checkpoints against each other, retrieve any file's content from any checkpoint, or search for a string across all checkpoints to find when code existed. Use this to find previous versions of files or functions, understand what changed, and pull out whatever snippets or diffs are needed — then apply selectively with Edit.",
   {
     name: z.string().describe('Checkpoint name to diff against (use "*" with file+search to scan all checkpoints)'),
-    file: z.string().optional().describe('Specific file to retrieve from checkpoint (returns content + diff vs current)'),
-    summary: z.boolean().optional().describe('Return file list only without content diffs (faster for large changesets)'),
+    file: z
+      .string()
+      .optional()
+      .describe('Specific file to retrieve from checkpoint (returns content + diff vs current)'),
+    summary: z
+      .boolean()
+      .optional()
+      .describe('Return file list only without content diffs (faster for large changesets)'),
     against: z.string().optional().describe('Compare against another checkpoint instead of current working directory'),
-    search: z.string().optional().describe('Search for this string across all checkpoints (requires name="*" and file)')
+    search: z
+      .string()
+      .optional()
+      .describe('Search for this string across all checkpoints (requires name="*" and file)'),
   },
   async ({ name, file, summary, against, search }) => {
     const projectDir = getProjectDir();
@@ -234,18 +279,32 @@ server.tool(
     // Search results
     if ('search' in result) {
       if (result.hits.length === 0) {
-        return { content: [{ type: 'text' as const, text:
-          fmt(`"${result.search}" not found in ${result.file} across any checkpoint`, null, projectDir)
-        }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: fmt(`"${result.search}" not found in ${result.file} across any checkpoint`, null, projectDir),
+            },
+          ],
+        };
       }
       const lines: string[] = [];
       for (const hit of result.hits) {
         lines.push(`${hit.checkpoint} (${timeAgo(hit.created)})`);
         for (const line of hit.lines) lines.push(`  ${line}`);
       }
-      return { content: [{ type: 'text' as const, text:
-        fmt(`"${result.search}" in ${result.file} \u2501\u2501 ${result.hits.length} checkpoint${result.hits.length !== 1 ? 's' : ''}`, lines, projectDir)
-      }] };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: fmt(
+              `"${result.search}" in ${result.file} \u2501\u2501 ${result.hits.length} checkpoint${result.hits.length !== 1 ? 's' : ''}`,
+              lines,
+              projectDir,
+            ),
+          },
+        ],
+      };
     }
 
     // Single file retrieval — content + diff vs current
@@ -262,9 +321,7 @@ server.tool(
       const total = result.modified.length + result.added.length + result.deleted.length;
       if (total === 0) {
         const target = against ? `"${name}" vs "${against}"` : `"${name}"`;
-        return { content: [{ type: 'text' as const, text:
-          fmt(`no changes vs ${target}`, null, projectDir)
-        }] };
+        return { content: [{ type: 'text' as const, text: fmt(`no changes vs ${target}`, null, projectDir) }] };
       }
 
       const lines: string[] = [];
@@ -291,7 +348,7 @@ server.tool(
     }
 
     return { content: [{ type: 'text' as const, text: fmt('unexpected result', null, projectDir) }] };
-  }
+  },
 );
 
 // ── vigil_restore ─────────────────────────────────────────────────
@@ -300,7 +357,7 @@ server.tool(
   'vigil_restore',
   'Restore project to a checkpoint state. Quicksaves current state first. Displaced files (modified + new) are preserved in .claude/vigil/artifacts/ — nothing is ever deleted. For individual file/function restores, use vigil_diff to get the content and apply with Edit.',
   {
-    name: z.string().describe('Checkpoint name to restore')
+    name: z.string().describe('Checkpoint name to restore'),
   },
   async ({ name }) => {
     const projectDir = getProjectDir();
@@ -311,14 +368,16 @@ server.tool(
     }
 
     // Report what happened + safety info
-    const skipped = detectSkippedDirs(projectDir);
+    const skipped = detectDerivedDirs(projectDir);
     const lines: string[] = [];
 
     // Displaced files info
     if (result.displaced.length > 0) {
-      lines.push(`preserved ${result.displaced.length} displaced file${result.displaced.length !== 1 ? 's' : ''} in ${result.artifactsDir}`);
-      const modified = result.displaced.filter(d => d.reason === 'modified');
-      const newFiles = result.displaced.filter(d => d.reason === 'new');
+      lines.push(
+        `preserved ${result.displaced.length} displaced file${result.displaced.length !== 1 ? 's' : ''} in ${result.artifactsDir}`,
+      );
+      const modified = result.displaced.filter((d) => d.reason === 'modified');
+      const newFiles = result.displaced.filter((d) => d.reason === 'new');
       if (modified.length > 0) {
         for (const d of modified.slice(0, 10)) lines.push(`  modified: ${d.path} (current version saved)`);
         if (modified.length > 10) lines.push(`  ... and ${modified.length - 10} more modified files`);
@@ -343,16 +402,23 @@ server.tool(
     // Remind about artifact cleanup when they accumulate
     const artifactsBase = join(projectDir, '.claude', 'vigil', 'artifacts');
     if (existsSync(artifactsBase)) {
-      const artifactDirs = readdirSync(artifactsBase, { withFileTypes: true }).filter(e => e.isDirectory());
+      const artifactDirs = readdirSync(artifactsBase, { withFileTypes: true }).filter((e) => e.isDirectory());
       if (artifactDirs.length >= 3) {
-        lines.push(`note: ${artifactDirs.length} artifact directories in .claude/vigil/artifacts/ — review and clean up old ones if no longer needed`);
+        lines.push(
+          `note: ${artifactDirs.length} artifact directories in .claude/vigil/artifacts/ — review and clean up old ones if no longer needed`,
+        );
       }
     }
 
-    return { content: [{ type: 'text' as const, text:
-      fmt(`restored from "${name}" \u2501\u2501 ${result.filesRestored} files`, lines, projectDir)
-    }] };
-  }
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: fmt(`restored from "${name}" \u2501\u2501 ${result.filesRestored} files`, lines, projectDir),
+        },
+      ],
+    };
+  },
 );
 
 // ── vigil_delete ──────────────────────────────────────────────────
@@ -362,15 +428,15 @@ server.tool(
   'Delete a checkpoint and reclaim disk space. Use all=true to delete everything.',
   {
     name: z.string().optional().describe('Checkpoint name to delete'),
-    all: z.boolean().optional().describe('Delete all checkpoints and reclaim all space')
+    all: z.boolean().optional().describe('Delete all checkpoints and reclaim all space'),
   },
   async ({ name, all }) => {
     const projectDir = getProjectDir();
 
     if (!name && !all) {
-      return { content: [{ type: 'text' as const, text:
-        fmt('specify a checkpoint name or all=true', null, projectDir)
-      }] };
+      return {
+        content: [{ type: 'text' as const, text: fmt('specify a checkpoint name or all=true', null, projectDir) }],
+      };
     }
 
     const result = deleteCheckpoint(projectDir, name, { all });
@@ -379,10 +445,19 @@ server.tool(
       return { content: [{ type: 'text' as const, text: fmt(`"${name}" not found`, null, projectDir) }] };
     }
 
-    return { content: [{ type: 'text' as const, text:
-      fmt(`deleted ${result.deleted} \u2501\u2501 reclaimed ${formatBytes(result.gc.bytesFreed)} (${result.gc.removed} objects)`, null, projectDir)
-    }] };
-  }
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: fmt(
+            `deleted ${result.deleted} \u2501\u2501 reclaimed ${formatBytes(result.gc.bytesFreed)} (${result.gc.removed} objects)`,
+            null,
+            projectDir,
+          ),
+        },
+      ],
+    };
+  },
 );
 
 // ── Start server ──────────────────────────────────────────────────

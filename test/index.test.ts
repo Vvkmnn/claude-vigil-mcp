@@ -5,11 +5,16 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 
-import { hashContent, storeObject, readObject, gcObjects, diskUsage } from '../src/store.js';
+import { hashContent, storeObject, readObject, diskUsage } from '../src/store.js';
 import {
-  readManifest, writeManifest, walkProject,
-  createCheckpoint, restoreCheckpoint, diffCheckpoint,
-  listCheckpointFiles, deleteCheckpoint, generateUnifiedDiff
+  readManifest,
+  writeManifest,
+  createCheckpoint,
+  restoreCheckpoint,
+  diffCheckpoint,
+  listCheckpointFiles,
+  deleteCheckpoint,
+  generateUnifiedDiff,
 } from '../src/snapshot.js';
 
 // ── Test helpers ──────────────────────────────────────────────────
@@ -61,7 +66,7 @@ describe('store', () => {
 
     // Only one file should exist
     const dir = join(vigilDir, 'objects', hash1.slice(0, 2));
-    const files = readdirSync(dir).filter(f => f.startsWith(hash1.slice(2)));
+    const files = readdirSync(dir).filter((f) => f.startsWith(hash1.slice(2)));
     assert.equal(files.length, 1);
   });
 
@@ -103,7 +108,7 @@ describe('snapshot', () => {
 
     const manifest = readManifest(join(projectDir, '.claude', 'vigil'));
     assert.equal(manifest.checkpoints.length, 1);
-    assert.equal(manifest.checkpoints[0].name, 'v1');
+    assert.equal(manifest.checkpoints[0]!.name, 'v1');
   });
 
   it('create → modify → restore → verify bit-identical', () => {
@@ -156,7 +161,7 @@ describe('snapshot', () => {
     const diff = diffCheckpoint(projectDir, 'v1');
     assert.ok('modified' in diff);
     if (!('modified' in diff)) return;
-    assert.ok(diff.modified.some(f => f.path === 'src/app.js'));
+    assert.ok(diff.modified.some((f) => f.path === 'src/app.js'));
     assert.ok(diff.added.includes('src/new.js'));
     assert.ok(diff.deleted.includes('README.md'));
   });
@@ -188,7 +193,7 @@ describe('snapshot', () => {
   it('quicksave: overwritten on each new quicksave', () => {
     createCheckpoint(projectDir, '~quicksave', 'quicksave');
     const manifest1 = readManifest(join(projectDir, '.claude', 'vigil'));
-    const created1 = manifest1.quicksave!.created;
+    assert.ok(manifest1.quicksave, 'first quicksave should exist');
 
     // Small delay to ensure different timestamp
     writeProjectFile(projectDir, 'src/app.js', 'changed');
@@ -202,7 +207,7 @@ describe('snapshot', () => {
 
   it('binary files captured correctly', () => {
     // Write a binary file (PNG header + random bytes)
-    const binary = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00]);
+    const binary = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]);
     writeFileSync(join(projectDir, 'image.png'), binary);
 
     const result = createCheckpoint(projectDir, 'with-binary', 'manual');
@@ -211,7 +216,7 @@ describe('snapshot', () => {
     assert.equal(result.fileCount, 4); // 3 text files + 1 binary
 
     // Modify and restore
-    writeFileSync(join(projectDir, 'image.png'), Buffer.from([0xFF]));
+    writeFileSync(join(projectDir, 'image.png'), Buffer.from([0xff]));
     restoreCheckpoint(projectDir, 'with-binary');
 
     const restored = readFileSync(join(projectDir, 'image.png'));
@@ -227,9 +232,9 @@ describe('snapshot', () => {
     writeProjectFile(projectDir, 'debug.log', 'log content');
     writeProjectFile(projectDir, 'tmp/cache.json', '{}');
 
-    const result = createCheckpoint(projectDir, 'with-ignore', 'manual');
+    createCheckpoint(projectDir, 'with-ignore', 'manual');
     const manifest = readManifest(vigilDir);
-    const files = Object.keys(manifest.checkpoints[0].files);
+    const files = Object.keys(manifest.checkpoints[0]!.files);
 
     assert.ok(!files.includes('debug.log'), 'should skip *.log');
     assert.ok(!files.includes('tmp/cache.json'), 'should skip tmp/');
@@ -310,7 +315,7 @@ describe('snapshot', () => {
     const diff = diffCheckpoint(projectDir, 'v1');
     assert.ok('modified' in diff);
     if (!('modified' in diff)) return;
-    const change = diff.modified.find(f => f.path === 'src/app.js');
+    const change = diff.modified.find((f) => f.path === 'src/app.js');
     assert.ok(change, 'src/app.js should be in modified');
     assert.ok(!change.binary, 'should not be binary');
     assert.ok(change.diff.includes('-console.log("hello");'), 'diff should show old line');
@@ -325,7 +330,7 @@ describe('snapshot', () => {
     const diff = diffCheckpoint(projectDir, 'v1', { summary: true });
     assert.ok('modified' in diff);
     if (!('modified' in diff)) return;
-    const change = diff.modified.find(f => f.path === 'src/app.js');
+    const change = diff.modified.find((f) => f.path === 'src/app.js');
     assert.ok(change, 'src/app.js should be in modified');
     assert.equal(change.diff, '', 'summary mode should have empty diff');
   });
@@ -344,17 +349,17 @@ describe('snapshot', () => {
   });
 
   it('diff: binary files detected correctly', () => {
-    const binary = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x00, 0x0A, 0x1A, 0x0A]);
+    const binary = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0a, 0x1a, 0x0a]);
     writeFileSync(join(projectDir, 'image.png'), binary);
     createCheckpoint(projectDir, 'v1', 'manual');
 
     // Modify the binary file
-    writeFileSync(join(projectDir, 'image.png'), Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x00, 0xFF]));
+    writeFileSync(join(projectDir, 'image.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]));
 
     const diff = diffCheckpoint(projectDir, 'v1');
     assert.ok('modified' in diff);
     if (!('modified' in diff)) return;
-    const change = diff.modified.find(f => f.path === 'image.png');
+    const change = diff.modified.find((f) => f.path === 'image.png');
     assert.ok(change, 'image.png should be in modified');
     assert.ok(change.binary, 'should be marked as binary');
     assert.equal(change.diff, '', 'binary files should have empty diff');
@@ -369,7 +374,10 @@ describe('snapshot', () => {
     const diff = diffCheckpoint(projectDir, 'v1', { against: 'v2' });
     assert.ok('modified' in diff);
     if (!('modified' in diff)) return;
-    assert.ok(diff.modified.some(f => f.path === 'src/app.js'), 'app.js should be modified');
+    assert.ok(
+      diff.modified.some((f) => f.path === 'src/app.js'),
+      'app.js should be modified',
+    );
     assert.ok(diff.added.includes('src/new.js'), 'new.js should be added');
   });
 
@@ -377,7 +385,7 @@ describe('snapshot', () => {
     createCheckpoint(projectDir, 'described', 'manual', 'before auth migration');
     const vigilDir = join(projectDir, '.claude', 'vigil');
     const manifest = readManifest(vigilDir);
-    const cp = manifest.checkpoints.find(c => c.name === 'described');
+    const cp = manifest.checkpoints.find((c) => c.name === 'described');
     assert.ok(cp, 'checkpoint should exist');
     assert.equal(cp.description, 'before auth migration');
   });
@@ -386,7 +394,7 @@ describe('snapshot', () => {
     createCheckpoint(projectDir, 'nodesc', 'manual');
     const vigilDir = join(projectDir, '.claude', 'vigil');
     const manifest = readManifest(vigilDir);
-    const cp = manifest.checkpoints.find(c => c.name === 'nodesc');
+    const cp = manifest.checkpoints.find((c) => c.name === 'nodesc');
     assert.ok(cp, 'checkpoint should exist');
     assert.equal(cp.description, undefined);
   });
@@ -402,7 +410,7 @@ describe('snapshot', () => {
     assert.ok('search' in result);
     if (!('search' in result)) return;
     assert.equal(result.hits.length, 1, 'only with-jwt checkpoint should match');
-    assert.equal(result.hits[0].checkpoint, 'with-jwt');
+    assert.equal(result.hits[0]!.checkpoint, 'with-jwt');
   });
 
   it('search with no matches returns empty hits', () => {
@@ -428,7 +436,7 @@ describe('snapshot', () => {
 
     // Displaced modified file should be in artifacts
     assert.ok(result.displaced.length > 0, 'should have displaced files');
-    const displaced = result.displaced.find(d => d.path === 'src/app.js');
+    const displaced = result.displaced.find((d) => d.path === 'src/app.js');
     assert.ok(displaced, 'src/app.js should be displaced');
     assert.equal(displaced.reason, 'modified');
 
@@ -450,7 +458,7 @@ describe('snapshot', () => {
     assert.ok(!existsSync(join(projectDir, 'src/brand-new.js')), 'new file should be removed from project');
 
     // New file should be in artifacts
-    const displaced = result.displaced.find(d => d.path === 'src/brand-new.js');
+    const displaced = result.displaced.find((d) => d.path === 'src/brand-new.js');
     assert.ok(displaced, 'brand-new.js should be displaced');
     assert.equal(displaced.reason, 'new');
 
@@ -496,14 +504,18 @@ describe('worker', () => {
     writeProjectFile(projectDir, 'file.txt', 'content');
     mkdirSync(join(projectDir, '.claude', 'vigil'), { recursive: true });
 
-    const workerPath = join(import.meta.url.replace('file://', '').replace('test/index.test.js', ''), 'src', 'worker.js');
+    const workerPath = join(
+      import.meta.url.replace('file://', '').replace('test/index.test.js', ''),
+      'src',
+      'worker.js',
+    );
 
     // Run worker synchronously for testing
     execFileSync(process.execPath, [workerPath, projectDir, 'worker-test', 'manual']);
 
     const manifest = readManifest(join(projectDir, '.claude', 'vigil'));
     assert.equal(manifest.checkpoints.length, 1);
-    assert.equal(manifest.checkpoints[0].name, 'worker-test');
+    assert.equal(manifest.checkpoints[0]!.name, 'worker-test');
 
     // Lockfile should be cleaned up
     assert.ok(!existsSync(join(projectDir, '.claude', 'vigil', '.in-progress')));
@@ -653,7 +665,7 @@ describe('edge cases: save', () => {
     assert.ok(!('error' in result));
 
     const manifest = readManifest(join(projectDir, '.claude', 'vigil'));
-    assert.ok(manifest.checkpoints[0].files['a/b/c/d/e/deep.txt']);
+    assert.ok(manifest.checkpoints[0]!.files['a/b/c/d/e/deep.txt']);
   });
 
   it('special characters in file names', () => {
@@ -664,7 +676,7 @@ describe('edge cases: save', () => {
     assert.ok(!('error' in result));
 
     const manifest = readManifest(join(projectDir, '.claude', 'vigil'));
-    const files = Object.keys(manifest.checkpoints[0].files);
+    const files = Object.keys(manifest.checkpoints[0]!.files);
     assert.ok(files.includes('src/file with spaces.js'));
     assert.ok(files.includes('src/file-with-dashes.js'));
     assert.ok(files.includes('src/file_underscores.js'));
@@ -700,12 +712,12 @@ describe('edge cases: restore artifacts', () => {
     assert.ok(!existsSync(join(projectDir, 'src/brand-new.js')));
 
     // Verify displaced files
-    const modified = result.displaced.filter(d => d.reason === 'modified');
-    const newFiles = result.displaced.filter(d => d.reason === 'new');
+    const modified = result.displaced.filter((d) => d.reason === 'modified');
+    const newFiles = result.displaced.filter((d) => d.reason === 'new');
     assert.equal(modified.length, 1);
-    assert.equal(modified[0].path, 'src/app.js');
+    assert.equal(modified[0]!.path, 'src/app.js');
     assert.equal(newFiles.length, 1);
-    assert.equal(newFiles[0].path, 'src/brand-new.js');
+    assert.equal(newFiles[0]!.path, 'src/brand-new.js');
 
     // Verify artifact contents are the PRE-restore versions
     const artifactModified = readFileSync(join(projectDir, result.artifactsDir, 'src/app.js'), 'utf8');
@@ -723,7 +735,7 @@ describe('edge cases: restore artifacts', () => {
     if ('error' in result) return;
 
     assert.ok(!existsSync(join(projectDir, 'a/b/c/deep-new.txt')));
-    const displaced = result.displaced.find(d => d.path === 'a/b/c/deep-new.txt');
+    const displaced = result.displaced.find((d) => d.path === 'a/b/c/deep-new.txt');
     assert.ok(displaced);
     assert.equal(displaced.reason, 'new');
 
@@ -769,7 +781,7 @@ describe('edge cases: restore artifacts', () => {
 
     // Quicksave captured the state right before the first restore
     // which had 'before quicksave' in it
-    const displaced = result.displaced.find(d => d.path === 'src/app.js');
+    const displaced = result.displaced.find((d) => d.path === 'src/app.js');
     assert.ok(displaced, 'should displace the modified file');
     assert.equal(displaced.reason, 'modified');
   });
@@ -786,17 +798,17 @@ describe('edge cases: restore artifacts', () => {
     assert.equal(readProjectFile(projectDir, 'README.md'), '# My Project');
     // No displaced files since nothing was modified or new — only a missing file was restored
     // (deleted files don't get displaced, they just get restored)
-    const readmeDisplaced = result.displaced.find(d => d.path === 'README.md');
+    const readmeDisplaced = result.displaced.find((d) => d.path === 'README.md');
     assert.ok(!readmeDisplaced, 'deleted files should not appear as displaced');
   });
 
   it('binary files are correctly preserved in artifacts', () => {
-    const binary = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x00, 0x0A, 0x1A, 0x0A]);
+    const binary = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x0a, 0x1a, 0x0a]);
     writeFileSync(join(projectDir, 'image.png'), binary);
     createCheckpoint(projectDir, 'v1', 'manual');
 
     // Modify binary
-    const modified = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]);
+    const modified = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
     writeFileSync(join(projectDir, 'image.png'), modified);
 
     const result = restoreCheckpoint(projectDir, 'v1');
@@ -807,7 +819,7 @@ describe('edge cases: restore artifacts', () => {
     assert.deepEqual(readFileSync(join(projectDir, 'image.png')), binary);
 
     // Modified binary preserved in artifacts
-    const displaced = result.displaced.find(d => d.path === 'image.png');
+    const displaced = result.displaced.find((d) => d.path === 'image.png');
     assert.ok(displaced);
     assert.deepEqual(readFileSync(join(projectDir, result.artifactsDir, 'image.png')), modified);
   });
@@ -869,7 +881,7 @@ describe('edge cases: diff', () => {
     const result = diffCheckpoint(projectDir, 'v1', { against: 'v2', summary: true });
     assert.ok('modified' in result);
     if (!('modified' in result)) return;
-    const change = result.modified.find(f => f.path === 'src/app.js');
+    const change = result.modified.find((f) => f.path === 'src/app.js');
     assert.ok(change);
     assert.equal(change.diff, '', 'summary mode should have empty diff');
   });
@@ -889,7 +901,7 @@ describe('edge cases: diff', () => {
     const result = diffCheckpoint(projectDir, '*', { file: 'src/auth.ts', search: 'SECRET' });
     assert.ok('search' in result);
     if (!('search' in result)) return;
-    assert.ok(result.hits.some(h => h.checkpoint === '~quicksave'));
+    assert.ok(result.hits.some((h) => h.checkpoint === '~quicksave'));
   });
 
   it('search returns context lines around matches', () => {
@@ -901,12 +913,24 @@ describe('edge cases: diff', () => {
     if (!('search' in result)) return;
     assert.equal(result.hits.length, 1);
     // Should have context lines around the match
-    const lines = result.hits[0].lines;
-    assert.ok(lines.some(l => l.includes('TARGET')), 'should contain the match');
-    assert.ok(lines.some(l => l.includes('line2')), 'should contain context before');
-    assert.ok(lines.some(l => l.includes('line4')), 'should contain context after');
+    const lines = result.hits[0]!.lines;
+    assert.ok(
+      lines.some((l) => l.includes('TARGET')),
+      'should contain the match',
+    );
+    assert.ok(
+      lines.some((l) => l.includes('line2')),
+      'should contain context before',
+    );
+    assert.ok(
+      lines.some((l) => l.includes('line4')),
+      'should contain context after',
+    );
     // The match line should be marked with >
-    assert.ok(lines.some(l => l.startsWith('>')), 'match line should start with >');
+    assert.ok(
+      lines.some((l) => l.startsWith('>')),
+      'match line should start with >',
+    );
   });
 
   it('diff with large number of changes', () => {
@@ -916,13 +940,13 @@ describe('edge cases: diff', () => {
     createCheckpoint(projectDir, 'v1', 'manual');
 
     // Modify every other line
-    const modified = lines.map((l, i) => i % 2 === 0 ? l.toUpperCase() : l);
+    const modified = lines.map((l, i) => (i % 2 === 0 ? l.toUpperCase() : l));
     writeProjectFile(projectDir, 'big.txt', modified.join('\n'));
 
     const result = diffCheckpoint(projectDir, 'v1');
     assert.ok('modified' in result);
     if (!('modified' in result)) return;
-    const change = result.modified.find(f => f.path === 'big.txt');
+    const change = result.modified.find((f) => f.path === 'big.txt');
     assert.ok(change);
     assert.ok(change.linesAdded > 0);
     assert.ok(change.linesRemoved > 0);
@@ -953,14 +977,14 @@ describe('edge cases: descriptions', () => {
     createCheckpoint(projectDir, 'v1', 'manual', 'before "refactoring" — JWT → sessions');
     const vigilDir = join(projectDir, '.claude', 'vigil');
     const manifest = readManifest(vigilDir);
-    assert.equal(manifest.checkpoints[0].description, 'before "refactoring" — JWT → sessions');
+    assert.equal(manifest.checkpoints[0]!.description, 'before "refactoring" — JWT → sessions');
   });
 
   it('description with multiline string', () => {
     createCheckpoint(projectDir, 'v1', 'manual', 'line 1\nline 2\nline 3');
     const vigilDir = join(projectDir, '.claude', 'vigil');
     const manifest = readManifest(vigilDir);
-    assert.equal(manifest.checkpoints[0].description, 'line 1\nline 2\nline 3');
+    assert.equal(manifest.checkpoints[0]!.description, 'line 1\nline 2\nline 3');
   });
 
   it('empty string description is stored (different from undefined)', () => {
@@ -969,7 +993,7 @@ describe('edge cases: descriptions', () => {
     const manifest = readManifest(vigilDir);
     // Empty string is falsy, so the spread won't add it
     // This is expected behavior — empty description = no description
-    assert.equal(manifest.checkpoints[0].description, undefined);
+    assert.equal(manifest.checkpoints[0]!.description, undefined);
   });
 });
 
@@ -1013,10 +1037,10 @@ describe('edge cases: lifecycle', () => {
     const diff = diffCheckpoint(projectDir, 'v1', { against: 'v2' });
     assert.ok('added' in diff);
     if (!('added' in diff)) return;
-    assert.ok(diff.modified.some(f => f.path === 'src/app.js'));
+    assert.ok(diff.modified.some((f) => f.path === 'src/app.js'));
     assert.ok(diff.added.includes('src/new.js'));
     // Should have actual diff content
-    const appChange = diff.modified.find(f => f.path === 'src/app.js');
+    const appChange = diff.modified.find((f) => f.path === 'src/app.js');
     assert.ok(appChange && appChange.diff.includes('+v2 content'));
   });
 
@@ -1071,12 +1095,12 @@ describe('edge cases: lifecycle', () => {
     // Search for JWT — only in first checkpoint
     const jwt = diffCheckpoint(projectDir, '*', { file: 'src/auth.ts', search: 'JWT' });
     assert.ok('search' in jwt && jwt.hits.length === 1);
-    if ('search' in jwt) assert.equal(jwt.hits[0].checkpoint, 'jwt-era');
+    if ('search' in jwt) assert.equal(jwt.hits[0]!.checkpoint, 'jwt-era');
 
     // Search for Session — only in second
     const session = diffCheckpoint(projectDir, '*', { file: 'src/auth.ts', search: 'Session' });
     assert.ok('search' in session && session.hits.length === 1);
-    if ('search' in session) assert.equal(session.hits[0].checkpoint, 'session-era');
+    if ('search' in session) assert.equal(session.hits[0]!.checkpoint, 'session-era');
 
     // Search for 'auth' — in all three
     const auth = diffCheckpoint(projectDir, '*', { file: 'src/auth.ts', search: 'auth' });

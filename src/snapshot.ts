@@ -1,16 +1,38 @@
-// Snapshot operations: create, restore, diff, and project walking.
-// Captures EVERYTHING in the project — no file size or binary filtering.
+/**
+ * Snapshot operations: create, restore, diff, list, and delete checkpoints.
+ *
+ * Captures EVERYTHING in the project — no file size limits or binary filtering.
+ * Skips VCS internals (.git), OS junk (.DS_Store), derived/build artifacts
+ * (node_modules, dist, etc.), and patterns listed in `.claude/vigil/.vigilignore`.
+ */
 
 import {
-  readFileSync, writeFileSync, mkdirSync, existsSync,
-  readdirSync, statSync, unlinkSync, rmSync, copyFileSync, renameSync
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  existsSync,
+  readdirSync,
+  statSync,
+  unlinkSync,
+  rmSync,
+  copyFileSync,
+  renameSync,
 } from 'node:fs';
 import { join, relative, dirname } from 'node:path';
 import { hashContent, storeObject, readObject, gcObjects, diskUsage } from './store.js';
 import type {
-  Manifest, Checkpoint, CheckpointFiles, FileChange, SearchHit, DisplacedFile,
-  CreateCheckpointResult, RestoreResult, DiffResult, ListResult, DeleteResult,
-  WalkCallback
+  Manifest,
+  Checkpoint,
+  CheckpointFiles,
+  FileChange,
+  SearchHit,
+  DisplacedFile,
+  CreateCheckpointResult,
+  RestoreResult,
+  DiffResult,
+  ListResult,
+  DeleteResult,
+  WalkCallback,
 } from './types.js';
 
 // VCS internals and OS junk — never useful to restore, can cause conflicts
@@ -20,39 +42,72 @@ const ALWAYS_SKIP = new Set(['.git', '.hg', '.svn', '.DS_Store', 'Thumbs.db', '.
 // Storing these wastes space and causes permission issues on restore (e.g. node_modules/.bin).
 const DERIVED_DIRS = new Set([
   // JavaScript / TypeScript (Node.js, Deno, Bun)
-  'node_modules', 'dist', 'build', 'out', '.next', '.nuxt', '.output', '.parcel-cache', '.turbo',
+  'node_modules',
+  'dist',
+  'build',
+  'out',
+  '.next',
+  '.nuxt',
+  '.output',
+  '.parcel-cache',
+  '.turbo',
   // Python
-  'venv', '.venv', 'env', '__pycache__', '.eggs', '.mypy_cache', '.pytest_cache', '.ruff_cache', '.tox',
+  'venv',
+  '.venv',
+  'env',
+  '__pycache__',
+  '.eggs',
+  '.mypy_cache',
+  '.pytest_cache',
+  '.ruff_cache',
+  '.tox',
   // Rust
   'target',
   // Go
   'vendor',
   // Java / Kotlin / Scala
-  '.gradle', '.m2', '.mvn', '.idea', 'bin', 'obj',
+  '.gradle',
+  '.m2',
+  '.mvn',
+  '.idea',
+  'bin',
+  'obj',
   // C# / .NET
   'packages',
   // C / C++
-  'cmake-build-debug', 'cmake-build-release',
+  'cmake-build-debug',
+  'cmake-build-release',
   // Ruby
-  'vendor/bundle', '.bundle',
+  'vendor/bundle',
+  '.bundle',
   // PHP (Composer)
   'vendor',
   // Swift / iOS
-  'Pods', '.build', 'DerivedData',
+  'Pods',
+  '.build',
+  'DerivedData',
   // Dart / Flutter
-  '.dart_tool', '.flutter-plugins', '.pub-cache',
+  '.dart_tool',
+  '.flutter-plugins',
+  '.pub-cache',
   // Elixir / Erlang
-  '_build', 'deps',
+  '_build',
+  'deps',
   // Haskell
-  '.stack-work', 'dist-newstyle',
+  '.stack-work',
+  'dist-newstyle',
   // Lua (LuaRocks)
   'lua_modules',
   // R
-  'renv', 'packrat',
+  'renv',
+  'packrat',
   // Terraform / IaC
   '.terraform',
   // General build caches
-  '.cache', '.parcel-cache', '.eslintcache', '.stylelintcache',
+  '.cache',
+  '.parcel-cache',
+  '.eslintcache',
+  '.stylelintcache',
 ]);
 
 /**
@@ -62,28 +117,30 @@ const DERIVED_DIRS = new Set([
 function parseGitignoreDirs(projectDir: string): string[] {
   const p = join(projectDir, '.gitignore');
   if (!existsSync(p)) return [];
-  return readFileSync(p, 'utf8')
-    .split('\n')
-    .map(l => l.trim())
-    .filter(l => l && !l.startsWith('#'))
-    // Only directory patterns (trailing / or known dir names that exist)
-    .filter(l => {
-      // Explicit directory pattern like "dist/" or "node_modules/"
-      if (l.endsWith('/')) return true;
-      // Check if the pattern (without negation/glob) refers to an existing directory
-      const clean = l.replace(/^!/, '').replace(/\/\*\*$/, '').replace(/\/$/, '');
-      if (clean.includes('*')) return false; // skip glob file patterns like *.pyc
-      try {
-        return existsSync(join(projectDir, clean)) && statSync(join(projectDir, clean)).isDirectory();
-      } catch { return false; }
-    })
-    .map(l => l.replace(/\/\*\*$/, '/').replace(/\/$/, '') + '/') // normalize to "dir/"
-    .filter(l => !l.startsWith('!')); // skip negation patterns
-}
-
-/** Return which derived dirs were skipped and exist in the project (need regenerating after restore). */
-export function detectSkippedDirs(projectDir: string): string[] {
-  return detectDerivedDirs(projectDir);
+  return (
+    readFileSync(p, 'utf8')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('#'))
+      // Only directory patterns (trailing / or known dir names that exist)
+      .filter((l) => {
+        // Explicit directory pattern like "dist/" or "node_modules/"
+        if (l.endsWith('/')) return true;
+        // Check if the pattern (without negation/glob) refers to an existing directory
+        const clean = l
+          .replace(/^!/, '')
+          .replace(/\/\*\*$/, '')
+          .replace(/\/$/, '');
+        if (clean.includes('*')) return false; // skip glob file patterns like *.pyc
+        try {
+          return existsSync(join(projectDir, clean)) && statSync(join(projectDir, clean)).isDirectory();
+        } catch {
+          return false;
+        }
+      })
+      .map((l) => l.replace(/\/\*\*$/, '/').replace(/\/$/, '') + '/') // normalize to "dir/"
+      .filter((l) => !l.startsWith('!'))
+  ); // skip negation patterns
 }
 
 const DEFAULT_MAX_CHECKPOINTS = 3;
@@ -94,12 +151,21 @@ function manifestPath(vigilDir: string): string {
   return join(vigilDir, 'manifest.json');
 }
 
+/**
+ * Read the manifest from disk, or return an empty manifest if none exists.
+ * @param vigilDir - Path to `.claude/vigil/` directory.
+ */
 export function readManifest(vigilDir: string): Manifest {
   const p = manifestPath(vigilDir);
   if (!existsSync(p)) return { checkpoints: [], quicksave: null, config: {} };
-  return JSON.parse(readFileSync(p, 'utf8'));
+  return JSON.parse(readFileSync(p, 'utf8')) as Manifest;
 }
 
+/**
+ * Write the manifest to disk. Creates the vigil directory if needed.
+ * @param vigilDir - Path to `.claude/vigil/` directory.
+ * @param manifest - The manifest to persist.
+ */
 export function writeManifest(vigilDir: string, manifest: Manifest): void {
   mkdirSync(vigilDir, { recursive: true });
   writeFileSync(manifestPath(vigilDir), JSON.stringify(manifest, null, 2));
@@ -107,7 +173,6 @@ export function writeManifest(vigilDir: string, manifest: Manifest): void {
 
 // ── .vigilignore parsing (gitignore subset) ───────────────────────
 
-/** Detect which DERIVED_DIRS actually exist in the project. */
 /**
  * Detect derived/artifact directories in the project.
  * Merges two sources:
@@ -130,20 +195,28 @@ export function detectDerivedDirs(projectDir: string): string[] {
       if (existsSync(fullPath) && statSync(fullPath).isDirectory()) {
         found.add(dir + '/');
       }
-    } catch { /* permission denied, broken symlink */ }
+    } catch {
+      /* permission denied, broken symlink */
+    }
   }
 
   return [...found].sort();
 }
 
-/** Write the .vigilignore file inside the vigil dir. */
+/**
+ * Write the `.vigilignore` file inside the vigil directory.
+ * Groups patterns by source (.gitignore vs fallback) with explanatory comments.
+ * @param vigilDir - Path to `.claude/vigil/` directory.
+ * @param patterns - Normalized `dir/` patterns to write.
+ * @param projectDir - If provided, patterns from `.gitignore` are labeled separately.
+ */
 export function writeVigilignore(vigilDir: string, patterns: string[], projectDir?: string): void {
   mkdirSync(vigilDir, { recursive: true });
 
   // Separate patterns by source for clarity
   const gitignoreDirs = projectDir ? new Set(parseGitignoreDirs(projectDir)) : new Set<string>();
-  const fromGitignore = patterns.filter(p => gitignoreDirs.has(p));
-  const fromFallback = patterns.filter(p => !gitignoreDirs.has(p));
+  const fromGitignore = patterns.filter((p) => gitignoreDirs.has(p));
+  const fromFallback = patterns.filter((p) => !gitignoreDirs.has(p));
 
   const lines: string[] = ['# Auto-detected by vigil — edit to adjust what gets checkpointed'];
   if (fromGitignore.length > 0) {
@@ -159,7 +232,10 @@ export function writeVigilignore(vigilDir: string, patterns: string[], projectDi
   writeFileSync(join(vigilDir, '.vigilignore'), lines.join('\n'));
 }
 
-/** Check if .vigilignore has been initialized (first-save flow complete). */
+/**
+ * Check if `.vigilignore` has been initialized (first-save flow complete).
+ * @param vigilDir - Path to `.claude/vigil/` directory.
+ */
 export function hasVigilignore(vigilDir: string): boolean {
   return existsSync(join(vigilDir, '.vigilignore'));
 }
@@ -171,8 +247,8 @@ function parseVigilignore(projectDir: string): string[] {
   if (!existsSync(p)) return [];
   return readFileSync(p, 'utf8')
     .split('\n')
-    .map(l => l.trim())
-    .filter(l => l && !l.startsWith('#'));
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'));
 }
 
 /** Simple gitignore-style match: supports trailing /, leading *, and exact names. */
@@ -205,8 +281,11 @@ function matchesIgnore(relPath: string, patterns: string[]): boolean {
 export function walkProject(projectDir: string, callback: WalkCallback, ignorePatterns: string[] = []): void {
   function walk(dir: string): void {
     let entries;
-    try { entries = readdirSync(dir, { withFileTypes: true }); }
-    catch { return; } // Permission denied, broken symlink, etc.
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    } // Permission denied, broken symlink, etc.
 
     for (const entry of entries) {
       if (ALWAYS_SKIP.has(entry.name)) continue;
@@ -223,7 +302,9 @@ export function walkProject(projectDir: string, callback: WalkCallback, ignorePa
         try {
           const buf = readFileSync(fullPath);
           callback(relPath, buf);
-        } catch { /* skip unreadable files */ }
+        } catch {
+          /* skip unreadable files */
+        }
       }
       // Skip symlinks, sockets, etc.
     }
@@ -245,7 +326,9 @@ function isBinary(buf: Buffer): boolean {
 
 /**
  * Generate a unified diff between two strings.
- * LCS-based, zero dependencies. Returns standard format with @@ headers.
+ * Uses LCS (Longest Common Subsequence) to compute the minimal edit script,
+ * then groups changes into hunks with surrounding context lines.
+ * Zero dependencies. Returns standard unified diff format with @@ headers.
  */
 export function generateUnifiedDiff(oldContent: string, newContent: string, filePath: string): string {
   const oldLines = oldContent.split('\n');
@@ -253,44 +336,47 @@ export function generateUnifiedDiff(oldContent: string, newContent: string, file
   const n = oldLines.length;
   const m = newLines.length;
 
-  // Build LCS table (O(n*m) space — fine for source files)
-  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  // Build LCS (Longest Common Subsequence) table — O(n*m) space, fine for source files.
+  // lcsTable[i][j] = length of LCS of oldLines[0..i-1] and newLines[0..j-1].
+  const lcsTable: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
   for (let i = 1; i <= n; i++) {
     for (let j = 1; j <= m; j++) {
-      dp[i][j] = oldLines[i - 1] === newLines[j - 1]
-        ? dp[i - 1][j - 1] + 1
-        : Math.max(dp[i - 1][j], dp[i][j - 1]);
+      lcsTable[i]![j] =
+        oldLines[i - 1] === newLines[j - 1]
+          ? lcsTable[i - 1]![j - 1]! + 1
+          : Math.max(lcsTable[i - 1]![j]!, lcsTable[i]![j - 1]!);
     }
   }
 
-  // Backtrack to get edit script: 'keep' | 'delete' | 'insert'
+  // Backtrack through LCS table to produce edit script: 'keep' | 'delete' | 'insert'
   type Edit = { type: 'keep' | 'delete' | 'insert'; oldIdx: number; newIdx: number; line: string };
   const edits: Edit[] = [];
-  let i = n, j = m;
+  let i = n,
+    j = m;
   while (i > 0 || j > 0) {
     if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
-      edits.push({ type: 'keep', oldIdx: i - 1, newIdx: j - 1, line: oldLines[i - 1] });
-      i--; j--;
-    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-      edits.push({ type: 'insert', oldIdx: i - 1, newIdx: j - 1, line: newLines[j - 1] });
+      edits.push({ type: 'keep', oldIdx: i - 1, newIdx: j - 1, line: oldLines[i - 1]! });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || lcsTable[i]![j - 1]! >= lcsTable[i - 1]![j]!)) {
+      edits.push({ type: 'insert', oldIdx: i - 1, newIdx: j - 1, line: newLines[j - 1]! });
       j--;
     } else {
-      edits.push({ type: 'delete', oldIdx: i - 1, newIdx: -1, line: oldLines[i - 1] });
+      edits.push({ type: 'delete', oldIdx: i - 1, newIdx: -1, line: oldLines[i - 1]! });
       i--;
     }
   }
   edits.reverse();
 
-  // Group into hunks with 3 lines of context
+  // Group edits into hunks with CONTEXT lines of surrounding context (standard = 3)
   const CONTEXT = 3;
   type Hunk = { oldStart: number; oldCount: number; newStart: number; newCount: number; lines: string[] };
   const hunks: Hunk[] = [];
   let hunk: Hunk | null = null;
-  let lastChangeIdx = -999;
+  let lastChangeIdx = -999; // sentinel: no previous change
 
-  let oldLine = 0, newLine = 0;
   for (let e = 0; e < edits.length; e++) {
-    const edit = edits[e];
+    const edit = edits[e]!;
     const isChange = edit.type !== 'keep';
 
     if (isChange) {
@@ -302,17 +388,20 @@ export function generateUnifiedDiff(oldContent: string, newContent: string, file
         const contextStart = Math.max(0, e - CONTEXT);
         hunk = { oldStart: 0, oldCount: 0, newStart: 0, newCount: 0, lines: [] };
         // Recount positions for the context start
-        let oPos = 0, nPos = 0;
+        let oPos = 0,
+          nPos = 0;
         for (let k = 0; k < contextStart; k++) {
-          if (edits[k].type === 'keep' || edits[k].type === 'delete') oPos++;
-          if (edits[k].type === 'keep' || edits[k].type === 'insert') nPos++;
+          const kEdit = edits[k]!;
+          if (kEdit.type === 'keep' || kEdit.type === 'delete') oPos++;
+          if (kEdit.type === 'keep' || kEdit.type === 'insert') nPos++;
         }
         hunk.oldStart = oPos + 1;
         hunk.newStart = nPos + 1;
         // Add leading context lines
         for (let k = contextStart; k < e; k++) {
-          if (edits[k].type === 'keep') {
-            hunk.lines.push(' ' + edits[k].line);
+          const kEdit = edits[k]!;
+          if (kEdit.type === 'keep') {
+            hunk.lines.push(' ' + kEdit.line);
             hunk.oldCount++;
             hunk.newCount++;
           }
@@ -339,9 +428,6 @@ export function generateUnifiedDiff(oldContent: string, newContent: string, file
         hunk.newCount++;
       }
     }
-
-    if (edit.type === 'keep' || edit.type === 'delete') oldLine++;
-    if (edit.type === 'keep' || edit.type === 'insert') newLine++;
   }
   if (hunk) hunks.push(hunk);
 
@@ -359,10 +445,24 @@ export function generateUnifiedDiff(oldContent: string, newContent: string, file
 // ── Checkpoint operations ─────────────────────────────────────────
 
 /**
- * Create a named checkpoint. Walks project, hashes + stores every file.
- * Returns { name, type, created, fileCount, newObjects }.
+ * Create a named checkpoint of the entire project.
+ * Walks all project files, hashes and stores each in the CAS, then records
+ * the mapping in the manifest. Respects `.vigilignore` patterns and slot limits.
+ *
+ * For `type === 'quicksave'`, overwrites the single quicksave slot (no slot limit).
+ *
+ * @param projectDir - Root of the project to checkpoint.
+ * @param name - Human-readable checkpoint name.
+ * @param type - `'manual'` (default) or `'quicksave'`.
+ * @param description - Optional description shown in `vigil_list`.
+ * @returns Success with file count and CAS stats, or error if slots full / duplicate name.
  */
-export function createCheckpoint(projectDir: string, name: string, type: string = 'manual', description?: string): CreateCheckpointResult {
+export function createCheckpoint(
+  projectDir: string,
+  name: string,
+  type: string = 'manual',
+  description?: string,
+): CreateCheckpointResult {
   const vigilDir = join(projectDir, '.claude', 'vigil');
   mkdirSync(join(vigilDir, 'objects'), { recursive: true });
 
@@ -374,10 +474,14 @@ export function createCheckpoint(projectDir: string, name: string, type: string 
   if (type === 'quicksave') {
     const files: CheckpointFiles = {};
     let fileCount = 0;
-    walkProject(projectDir, (relPath, buf) => {
-      files[relPath] = storeObject(vigilDir, buf);
-      fileCount++;
-    }, ignorePatterns);
+    walkProject(
+      projectDir,
+      (relPath, buf) => {
+        files[relPath] = storeObject(vigilDir, buf);
+        fileCount++;
+      },
+      ignorePatterns,
+    );
 
     manifest.quicksave = { name: '~quicksave', created: new Date().toISOString(), files, fileCount };
     writeManifest(vigilDir, manifest);
@@ -389,12 +493,12 @@ export function createCheckpoint(projectDir: string, name: string, type: string 
     return {
       error: 'slots_full',
       max: maxCheckpoints,
-      checkpoints: manifest.checkpoints.map(c => ({ name: c.name, created: c.created }))
+      checkpoints: manifest.checkpoints.map((c) => ({ name: c.name, created: c.created })),
     };
   }
 
   // Check for duplicate name
-  if (manifest.checkpoints.some(c => c.name === name)) {
+  if (manifest.checkpoints.some((c) => c.name === name)) {
     return { error: 'duplicate_name', name };
   }
 
@@ -402,16 +506,20 @@ export function createCheckpoint(projectDir: string, name: string, type: string 
   let fileCount = 0;
   let newObjects = 0;
 
-  walkProject(projectDir, (relPath, buf) => {
-    const hash = hashContent(buf);
-    const objPath = join(vigilDir, 'objects', hash.slice(0, 2), hash.slice(2) + '.gz');
-    if (!existsSync(objPath)) {
-      storeObject(vigilDir, buf);
-      newObjects++;
-    }
-    files[relPath] = hash;
-    fileCount++;
-  }, ignorePatterns);
+  walkProject(
+    projectDir,
+    (relPath, buf) => {
+      const hash = hashContent(buf);
+      const objPath = join(vigilDir, 'objects', hash.slice(0, 2), hash.slice(2) + '.gz');
+      if (!existsSync(objPath)) {
+        storeObject(vigilDir, buf);
+        newObjects++;
+      }
+      files[relPath] = hash;
+      fileCount++;
+    },
+    ignorePatterns,
+  );
 
   const checkpoint: Checkpoint = {
     name,
@@ -437,11 +545,17 @@ function artifactTimestamp(): string {
 }
 
 /**
- * Restore a checkpoint. Always restores the ENTIRE codebase (no selective file restore).
- * Quicksaves current state first (emulator pattern).
+ * Restore a checkpoint, replacing the entire working directory with the checkpoint's files.
  *
- * No data loss: modified and new files are preserved in .claude/vigil/artifacts/
- * before being overwritten or moved. Artifacts are never touched by save/restore.
+ * Safety guarantees:
+ *   1. Quicksaves current state first (undo with `~quicksave`).
+ *   2. Modified files are copied to `artifacts/` before overwriting.
+ *   3. New files (not in checkpoint) are moved to `artifacts/`.
+ *   4. Artifacts are never touched by subsequent save/restore operations.
+ *
+ * @param projectDir - Root of the project to restore.
+ * @param name - Checkpoint name to restore (or `'~quicksave'`).
+ * @returns Restore details including displaced files, or error if not found.
  */
 export function restoreCheckpoint(projectDir: string, name: string): RestoreResult {
   const vigilDir = join(projectDir, '.claude', 'vigil');
@@ -461,33 +575,36 @@ export function restoreCheckpoint(projectDir: string, name: string): RestoreResu
   mkdirSync(artifactsDir, { recursive: true });
 
   const ignorePatterns = parseVigilignore(projectDir);
-  const checkpointPaths = new Set(Object.keys(checkpoint.files));
   const displaced: DisplacedFile[] = [];
 
   // Phase 1: Walk project to find modified and new files, preserve them
-  walkProject(projectDir, (relPath, buf) => {
-    const cpHash = checkpoint!.files[relPath];
-    const fullPath = join(projectDir, relPath);
-    const artifactPath = join(artifactsDir, relPath);
+  walkProject(
+    projectDir,
+    (relPath, buf) => {
+      const cpHash = checkpoint.files[relPath];
+      const fullPath = join(projectDir, relPath);
+      const artifactPath = join(artifactsDir, relPath);
 
-    if (!cpHash) {
-      // New file (not in checkpoint) — move to artifacts
-      mkdirSync(dirname(artifactPath), { recursive: true });
-      try {
-        renameSync(fullPath, artifactPath);
-      } catch {
-        // Cross-device rename fails — fall back to copy+delete
+      if (!cpHash) {
+        // New file (not in checkpoint) — move to artifacts
+        mkdirSync(dirname(artifactPath), { recursive: true });
+        try {
+          renameSync(fullPath, artifactPath);
+        } catch {
+          // Cross-device rename fails — fall back to copy+delete
+          copyFileSync(fullPath, artifactPath);
+          unlinkSync(fullPath);
+        }
+        displaced.push({ path: relPath, reason: 'new' });
+      } else if (cpHash !== hashContent(buf)) {
+        // Modified file — copy current version to artifacts before overwriting
+        mkdirSync(dirname(artifactPath), { recursive: true });
         copyFileSync(fullPath, artifactPath);
-        unlinkSync(fullPath);
+        displaced.push({ path: relPath, reason: 'modified' });
       }
-      displaced.push({ path: relPath, reason: 'new' });
-    } else if (cpHash !== hashContent(buf)) {
-      // Modified file — copy current version to artifacts before overwriting
-      mkdirSync(dirname(artifactPath), { recursive: true });
-      copyFileSync(fullPath, artifactPath);
-      displaced.push({ path: relPath, reason: 'modified' });
-    }
-  }, ignorePatterns);
+    },
+    ignorePatterns,
+  );
 
   // Phase 2: Restore all files from checkpoint
   let filesRestored = 0;
@@ -500,20 +617,22 @@ export function restoreCheckpoint(projectDir: string, name: string): RestoreResu
 
   // Clean up artifacts dir if nothing was displaced
   if (displaced.length === 0) {
-    try { rmSync(artifactsDir, { recursive: true }); } catch { /* fine */ }
+    try {
+      rmSync(artifactsDir, { recursive: true });
+    } catch {
+      /* fine */
+    }
   }
 
   const usage = diskUsage(vigilDir);
-  const artifactsRelDir = displaced.length > 0
-    ? `.claude/vigil/artifacts/${artifactsDirName}`
-    : '';
+  const artifactsRelDir = displaced.length > 0 ? `.claude/vigil/artifacts/${artifactsDirName}` : '';
   return { restored: name, quicksaved: true, filesRestored, artifactsDir: artifactsRelDir, displaced, usage };
 }
 
 /** Look up a checkpoint by name in the manifest. */
 function findCheckpoint(manifest: Manifest, name: string): Checkpoint | null {
   if (name === '~quicksave') return manifest.quicksave ?? null;
-  return manifest.checkpoints.find(c => c.name === name) ?? null;
+  return manifest.checkpoints.find((c) => c.name === name) ?? null;
 }
 
 /** Build a FileChange from old and new content for a file. */
@@ -531,19 +650,24 @@ function buildFileChange(vigilDir: string, relPath: string, cpHash: string, curr
 }
 
 /**
- * Diff current project against a checkpoint (or two checkpoints against each other).
+ * Compare the current project against a checkpoint, or perform cross-checkpoint operations.
  *
- * Modes:
- *   - Full diff:   diffCheckpoint(dir, name) → { added, modified: FileChange[], deleted }
- *   - Summary:     diffCheckpoint(dir, name, { summary: true }) → same but no diffs in FileChange
- *   - Single file: diffCheckpoint(dir, name, { file }) → { file, checkpoint, content, diff }
- *   - Against:     diffCheckpoint(dir, name, { against }) → diff checkpoint vs checkpoint
- *   - Search:      diffCheckpoint(dir, "*", { file, search }) → { search, file, hits }
+ * Five modes, selected by the combination of arguments:
+ *   - **Full diff**: `diffCheckpoint(dir, name)` — added/modified/deleted vs working directory.
+ *   - **Summary**: `diffCheckpoint(dir, name, { summary: true })` — file list only, no diffs.
+ *   - **Single file**: `diffCheckpoint(dir, name, { file })` — retrieve file content + diff vs current.
+ *   - **Checkpoint vs checkpoint**: `diffCheckpoint(dir, name, { against })` — diff two checkpoints.
+ *   - **Cross-checkpoint search**: `diffCheckpoint(dir, "*", { file, search })` — find a string across all checkpoints.
+ *
+ * @param projectDir - Root of the project.
+ * @param name - Checkpoint name to diff against (or `"*"` for search mode).
+ * @param opts - Mode selection options.
+ * @returns Discriminated union — check `'error' in result`, `'search' in result`, etc.
  */
 export function diffCheckpoint(
   projectDir: string,
   name: string,
-  opts: { file?: string; summary?: boolean; against?: string; search?: string } = {}
+  opts: { file?: string; summary?: boolean; against?: string; search?: string } = {},
 ): DiffResult {
   const vigilDir = join(projectDir, '.claude', 'vigil');
   const manifest = readManifest(vigilDir);
@@ -554,8 +678,8 @@ export function diffCheckpoint(
     const allCheckpoints = [...manifest.checkpoints];
     if (manifest.quicksave) allCheckpoints.push(manifest.quicksave);
 
-    for (const cp of allCheckpoints) {
-      const hash = cp.files[opts.file];
+    for (const ckpt of allCheckpoints) {
+      const hash = ckpt.files[opts.file];
       if (!hash) continue;
       const buf = readObject(vigilDir, hash);
       if (isBinary(buf)) continue;
@@ -563,7 +687,7 @@ export function diffCheckpoint(
       const lines = content.split('\n');
       const matchingLines: string[] = [];
       for (let i = 0; i < lines.length; i++) {
-        if (lines[i].includes(opts.search!)) {
+        if (lines[i]!.includes(opts.search)) {
           // Include 2 lines of context around match
           const start = Math.max(0, i - 2);
           const end = Math.min(lines.length - 1, i + 2);
@@ -575,10 +699,10 @@ export function diffCheckpoint(
         }
       }
       if (matchingLines.length > 0) {
-        hits.push({ checkpoint: cp.name, created: cp.created, lines: matchingLines });
+        hits.push({ checkpoint: ckpt.name, created: ckpt.created, lines: matchingLines });
       }
     }
-    return { search: opts.search!, file: opts.file, hits };
+    return { search: opts.search, file: opts.file, hits };
   }
 
   const checkpoint = findCheckpoint(manifest, name);
@@ -628,8 +752,8 @@ export function diffCheckpoint(
         if (opts.summary) {
           modified.push({ path: relPath, diff: '', binary: false, linesAdded: 0, linesRemoved: 0 });
         } else {
-          const oldBuf = readObject(vigilDir, checkpoint.files[relPath]);
-          const newBuf = readObject(vigilDir, other.files[relPath]);
+          const oldBuf = readObject(vigilDir, checkpoint.files[relPath]!);
+          const newBuf = readObject(vigilDir, other.files[relPath]!);
           if (isBinary(oldBuf) || isBinary(newBuf)) {
             modified.push({ path: relPath, diff: '', binary: true, linesAdded: 0, linesRemoved: 0 });
           } else {
@@ -653,21 +777,25 @@ export function diffCheckpoint(
   const ignorePatterns = parseVigilignore(projectDir);
 
   const currentFiles = new Set<string>();
-  walkProject(projectDir, (relPath, buf) => {
-    currentFiles.add(relPath);
-    const cpHash = checkpoint!.files[relPath];
-    if (!cpHash) {
-      added.push(relPath);
-    } else if (cpHash !== hashContent(buf)) {
-      if (opts.summary) {
-        modified.push({ path: relPath, diff: '', binary: false, linesAdded: 0, linesRemoved: 0 });
-      } else {
-        modified.push(buildFileChange(vigilDir, relPath, cpHash, buf));
+  walkProject(
+    projectDir,
+    (relPath, buf) => {
+      currentFiles.add(relPath);
+      const cpHash = checkpoint.files[relPath];
+      if (!cpHash) {
+        added.push(relPath);
+      } else if (cpHash !== hashContent(buf)) {
+        if (opts.summary) {
+          modified.push({ path: relPath, diff: '', binary: false, linesAdded: 0, linesRemoved: 0 });
+        } else {
+          modified.push(buildFileChange(vigilDir, relPath, cpHash, buf));
+        }
       }
-    }
-  }, ignorePatterns);
+    },
+    ignorePatterns,
+  );
 
-  for (const relPath of Object.keys(checkpoint!.files)) {
+  for (const relPath of Object.keys(checkpoint.files)) {
     if (!currentFiles.has(relPath)) {
       deleted.push(relPath);
     }
@@ -678,8 +806,13 @@ export function diffCheckpoint(
 }
 
 /**
- * List files in a checkpoint, optionally filtered by glob pattern.
- * Returns array of { path, size } objects.
+ * List files in a checkpoint, optionally filtered by a simple glob pattern.
+ * Supports prefix matching (`src/auth/**`) and suffix matching (`*.ts`).
+ *
+ * @param projectDir - Root of the project.
+ * @param name - Checkpoint name to list files from.
+ * @param glob - Optional glob pattern to filter results.
+ * @returns Sorted file list with total count, or error if checkpoint not found.
  */
 export function listCheckpointFiles(projectDir: string, name: string, glob?: string): ListResult {
   const vigilDir = join(projectDir, '.claude', 'vigil');
@@ -689,7 +822,7 @@ export function listCheckpointFiles(projectDir: string, name: string, glob?: str
   if (name === '~quicksave') {
     checkpoint = manifest.quicksave;
   } else {
-    checkpoint = manifest.checkpoints.find(c => c.name === name);
+    checkpoint = manifest.checkpoints.find((c) => c.name === name);
   }
   if (!checkpoint) return { error: 'not_found', name };
 
@@ -699,7 +832,7 @@ export function listCheckpointFiles(projectDir: string, name: string, glob?: str
   if (glob) {
     const globPrefix = glob.replace(/\*.*$/, '');
     const globSuffix = glob.includes('*') ? glob.split('*').pop()! : null;
-    files = files.filter(f => {
+    files = files.filter((f) => {
       if (globPrefix && !f.startsWith(globPrefix)) return false;
       if (globSuffix && !f.endsWith(globSuffix)) return false;
       return true;
@@ -709,13 +842,18 @@ export function listCheckpointFiles(projectDir: string, name: string, glob?: str
   return {
     name,
     files: files.sort(),
-    totalFiles: Object.keys(checkpoint.files).length
+    totalFiles: Object.keys(checkpoint.files).length,
   };
 }
 
 /**
- * Delete a checkpoint by name. Runs GC to reclaim unreferenced objects.
- * Returns { deleted, gc }.
+ * Delete a checkpoint by name (or all checkpoints with `opts.all`).
+ * Runs garbage collection afterward to reclaim unreferenced CAS objects.
+ *
+ * @param projectDir - Root of the project.
+ * @param name - Checkpoint name to delete (ignored if `opts.all` is true).
+ * @param opts - Pass `{ all: true }` to delete all checkpoints and the quicksave.
+ * @returns GC stats and disk usage, or error if checkpoint not found.
  */
 export function deleteCheckpoint(projectDir: string, name?: string, opts: { all?: boolean } = {}): DeleteResult {
   const vigilDir = join(projectDir, '.claude', 'vigil');
@@ -730,7 +868,7 @@ export function deleteCheckpoint(projectDir: string, name?: string, opts: { all?
     return { deleted: 'all', gc, usage };
   }
 
-  const idx = manifest.checkpoints.findIndex(c => c.name === name);
+  const idx = manifest.checkpoints.findIndex((c) => c.name === name);
   if (idx === -1) return { error: 'not_found', name: name! };
 
   manifest.checkpoints.splice(idx, 1);
