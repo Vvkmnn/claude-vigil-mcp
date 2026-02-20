@@ -191,7 +191,7 @@ Auto-quicksaves before destructive commands (`rm`, `mv`, `sed -i`, `git checkout
             │   background worker │
             │                     │
             │  ┌───────────────┐  │
-            │  │ walk project  │  │  every file, no skipping
+            │  │ walk project  │  │  source files only (skips derived dirs)
             │  └───────┬───────┘  │
             │          │          │
             │  ┌───────▼───────┐  │
@@ -239,20 +239,33 @@ Auto-quicksaves before destructive commands (`rm`, `mv`, `sed -i`, `git checkout
 
 **Disk honesty**: Every tool response shows `vigil: 2/3 | quicksave: 3m ago | 273 MB`. No hidden costs. 3 checkpoint slots by default. `.vigilignore` for excluding paths you don't need.
 
+## skill
+
+Optionally, install the skill to teach Claude when to proactively checkpoint before risky work:
+
+```bash
+npx skills add Vvkmnn/claude-vigil-mcp --skill vigil-checkpointing --global
+```
+
 ## architecture
 
 ```
 claude-vigil-mcp/
 ├── package.json
+├── tsconfig.json
 ├── src/
-│   ├── index.js       # MCP server, 5 tools
-│   ├── store.js       # CAS: hash, store, read, gc, disk usage
-│   ├── snapshot.js    # create, restore, diff, list, delete
-│   └── worker.js      # background snapshot process
+│   ├── index.ts       # MCP server, 5 tools
+│   ├── types.ts       # TypeScript interfaces and discriminated unions
+│   ├── store.ts       # CAS: hash, store, read, gc, disk usage
+│   ├── snapshot.ts    # create, restore, diff, list, delete
+│   └── worker.ts      # background snapshot process
 ├── hooks/
-│   └── pre-bash.js    # PreToolUse: quicksave before destructive bash
+│   └── pre-bash.js    # PreToolUse: quicksave before destructive bash (CJS)
+├── skills/
+│   └── vigil-checkpointing/
+│       └── SKILL.md   # optional skill for proactive checkpointing
 └── test/
-    └── index.test.js  # 24 tests
+    └── index.test.ts  # 24 tests
 ```
 
 **Design decisions:**
@@ -266,13 +279,15 @@ claude-vigil-mcp/
 
 ## disk usage
 
-| Project type | Raw size | First snapshot | Incremental |
-|-------------|----------|---------------|-------------|
-| Next.js + node_modules | 750 MB | ~265 MB | ~5 MB |
-| Rust + target/ | 2.5 GB | ~2.0 GB | ~15 MB |
-| Python + venv | 350 MB | ~130 MB | ~3 MB |
+Vigil auto-skips derived directories (`node_modules/`, `dist/`, `target/`, `venv/`, etc.) detected from `.gitignore` and common patterns. Only source files are checkpointed.
 
-After the first snapshot, only changed files add storage. Use `.vigilignore` to exclude large directories you don't need to checkpoint (e.g., `target/`, `node_modules/`).
+| Project type | Raw size | Source only | First snapshot | Incremental |
+|-------------|----------|-------------|---------------|-------------|
+| Next.js app | 750 MB | ~2 MB | ~1 MB | ~50 KB |
+| Rust project | 2.5 GB | ~5 MB | ~3 MB | ~100 KB |
+| Python project | 350 MB | ~3 MB | ~2 MB | ~50 KB |
+
+After restore, vigil reports which derived dirs exist but weren't restored — Claude rebuilds them (`npm install`, `cargo build`, etc.). Edit `.claude/vigil/.vigilignore` to adjust what gets skipped.
 
 ## development
 
@@ -295,7 +310,7 @@ Features planned for the [claude-emporium](https://github.com/Vvkmnn/claude-empo
 - **`/checkpoint` command** — slash command for save/list/restore/diff/delete
 - **Pre-compaction hook** — auto-snapshot before context compaction (insurance against amnesia)
 - **Session file history** — parse `messages.jsonl` to show per-file edit timeline
-- **Skill** — teach Claude when to proactively create checkpoints
+- **~~Skill~~** — ~~teach Claude when to proactively create checkpoints~~ (shipped: `npx skills add` above)
 - **Global status CLI** — `npx claude-vigil-mcp status --global` to see disk usage across all projects
 - **Configurable slot limit** — `.vigilconfig` for per-project settings
 - **Age-based cleanup** — `npx claude-vigil-mcp cleanup --older-than 7d` across projects
