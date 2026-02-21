@@ -2,7 +2,7 @@
 
 # claude-vigil-mcp
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for **checkpoint, snapshot, and file recovery** in [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Perfect snapshots, selective restore, bash safety net, and honest disk management.
+An [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for **checkpoint, snapshot, and file recovery** in [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Perfect snapshots, selective restore, bash safety net, and honest disk management.
 
 <br clear="right">
 
@@ -12,7 +12,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for **
 
 ---
 
-Every AI coding tool tracks file edits made through its own editor, but none of them track file changes made externally: bash commands (`rm`, `mv`, `sed -i`), Python scripts, build tools, or any process that modifies files outside the editor's API. When those changes go wrong, there's nothing to rewind to. Claude Code's built-in `/rewind` has additional gaps — external changes are invisible ([#6413](https://github.com/anthropics/claude-code/issues/6413), [#10077](https://github.com/anthropics/claude-code/issues/10077)), rewind is all-or-nothing with no selective file restore, timestamps only with no named checkpoints, and reliability bugs ([#21608](https://github.com/anthropics/claude-code/issues/21608), [#18516](https://github.com/anthropics/claude-code/issues/18516)).
+Every AI coding tool tracks file edits made through its own editor, but none of them track file changes made externally: bash commands (`rm`, `mv`, `sed -i`), Python scripts, build tools, or any process that modifies files outside the editor's API. When those changes go wrong, there's nothing to rewind to. Claude Code's built-in `/rewind` has additional gaps -- external changes are invisible ([#6413](https://github.com/anthropics/claude-code/issues/6413), [#10077](https://github.com/anthropics/claude-code/issues/10077)), rewind is all-or-nothing with no selective file restore, timestamps only with no named checkpoints, and reliability bugs ([#21608](https://github.com/anthropics/claude-code/issues/21608), [#18516](https://github.com/anthropics/claude-code/issues/18516)).
 
 ## install
 
@@ -30,9 +30,11 @@ claude mcp add claude-vigil-mcp -- npx claude-vigil-mcp
 
 ```
 Add this to our global mcp config: npx claude-vigil-mcp
+
+Install this mcp: https://github.com/Vvkmnn/claude-vigil-mcp
 ```
 
-**From any manually configurable `mcp.json`:** (Cursor, Windsurf, etc.)
+**From any manually configurable `mcp.json`**: (Cursor, Windsurf, etc.)
 
 ```json
 {
@@ -46,23 +48,30 @@ Add this to our global mcp config: npx claude-vigil-mcp
 }
 ```
 
-There is **no `npm install` required** — no external databases, no indexing, only Node.js built-ins for crypto, compression, and filesystem.
+There is **no `npm install` required** -- no external databases, no indexing, only Node.js built-ins for crypto, compression, and filesystem.
 
-## skill
+However, if `npx` resolves the wrong package, you can force resolution with:
+
+```bash
+npm install -g claude-vigil-mcp
+```
+
+## [skill](.claude/skills/claude-vigil)
 
 Optionally, install the skill to teach Claude when to proactively checkpoint before risky work:
 
 ```bash
-npx skills add Vvkmnn/claude-vigil-mcp --skill vigil-checkpointing --global
+npx skills add Vvkmnn/claude-vigil-mcp --skill claude-vigil --global
+# Optional: add --yes to skip interactive prompt and install to all agents
 ```
 
 This makes Claude automatically save checkpoints before destructive bash commands, risky refactors, or context compaction. The MCP works without the skill, but the skill improves discoverability.
 
-## plugin
+## [plugin](https://github.com/Vvkmnn/claude-emporium)
 
 For automatic checkpointing with hooks and commands, install from the [claude-emporium](https://github.com/Vvkmnn/claude-emporium) marketplace:
 
-```
+```bash
 /plugin marketplace add Vvkmnn/claude-emporium
 /plugin install claude-vigil@claude-emporium
 ```
@@ -99,14 +108,14 @@ First save auto-detects derived directories from `.gitignore` and creates `.vigi
 ```
 🏺 ┏━ saved "v1.0" ━━ 47 files · 4.1 MB ━━ vigil: 1/3 | quicksave: none | 4.1 MB
    ┃ skipped: node_modules, dist, .next
-   ┃ first save — confirm these exclusions look correct
+   ┃ first save -- confirm these exclusions look correct
    ┗ edit .claude/vigil/.vigilignore to adjust
 ```
 
 When slots are full:
 
 ```
-🏺 ┏━ 3/3 full — ask the user before proceeding ━━ vigil: 3/3 | quicksave: 2m ago | 8.7 MB
+🏺 ┏━ 3/3 full -- ask the user before proceeding ━━ vigil: 3/3 | quicksave: 2m ago | 8.7 MB
    ┃ v1.0 (2h ago) · before-refactor (45m ago) · experiment (5m ago)
    ┗ ASK the user: delete one with vigil_delete, or increase capacity with max_checkpoints?
 ```
@@ -204,7 +213,7 @@ function authenticate(req: Request) {
 vigil_diff name="v1.0" against="before-refactor"
 ```
 
-Shows unified diffs between the two checkpoint states — no working directory involved.
+Shows unified diffs between the two checkpoint states -- no working directory involved.
 
 **Search across all checkpoints:**
 
@@ -222,7 +231,7 @@ vigil_diff name="*" file="src/auth.ts" search="validateToken"
 
 #### vigil_restore
 
-Restore the project to a checkpoint state. Quicksaves current state first (undo with `vigil_restore name="~quicksave"`). Displaced files — both modified and newly created since the checkpoint — are preserved in `.claude/vigil/artifacts/` so nothing is ever lost. For individual file restores, use `vigil_diff` to retrieve file content, then apply with Edit.
+Restore the project to a checkpoint state. Quicksaves current state first (undo with `vigil_restore name="~quicksave"`). Displaced files -- both modified and newly created since the checkpoint -- are preserved in `.claude/vigil/artifacts/` so nothing is ever lost. For individual file restores, use `vigil_diff` to retrieve file content, then apply with Edit.
 
 ```
 vigil_restore name="v1.0"
@@ -234,7 +243,7 @@ vigil_restore name="v1.0"
    ┃   modified: src/auth.ts (current version saved)
    ┃   modified: src/middleware/validate.ts (current version saved)
    ┃   new: src/services/oauth.ts (moved, not in checkpoint)
-   ┃ review .claude/vigil/artifacts/restored_v1.0_20260219_143022/ — delete when no longer needed
+   ┃ review .claude/vigil/artifacts/restored_v1.0_20260219_143022/ -- delete when no longer needed
    ┃ previous state also quicksaved (use ~quicksave to undo)
    ┃ not restored (derived): node_modules, dist
    ┗ rebuild these before running the project
@@ -252,10 +261,6 @@ vigil_delete name="v1.0"
 🏺 ━━ deleted v1.0 ━━ reclaimed 241 MB (3,412 objects) ━━ vigil: 1/3 | quicksave: 3m ago | 4.5 MB
 ```
 
-#### pre-bash hook (automatic)
-
-Auto-quicksaves before destructive commands (`rm`, `mv`, `sed -i`, `git checkout`, `git reset`). The one gap no other tool fills. Fires in background, never blocks Claude.
-
 ## methodology
 
 How [claude-vigil-mcp](https://github.com/Vvkmnn/claude-vigil-mcp) [stores](https://github.com/Vvkmnn/claude-vigil-mcp/tree/main/src) checkpoints:
@@ -264,12 +269,10 @@ How [claude-vigil-mcp](https://github.com/Vvkmnn/claude-vigil-mcp) [stores](http
                     🏺 claude-vigil-mcp
                     ━━━━━━━━━━━━━━━━━━━
 
-     Claude calls tool              Pre-bash hook fires
-     vigil_save                     (destructive command)
-            │                              │
-            └──────────┬───────────────────┘
-                       │
-                       ▼
+              Claude calls tool
+                vigil_save
+                    │
+                    ▼
               ┌─────────────────┐
               │  spawn worker   │  <5ms, returns immediately
               │  (detached)     │
@@ -329,13 +332,13 @@ How [claude-vigil-mcp](https://github.com/Vvkmnn/claude-vigil-mcp) [stores](http
             └── done: bit-identical working directory
 ```
 
-**Storage:** Content-addressable storage (SHA-256 + gzip). Same file across checkpoints = stored once. Binary files included — a restored checkpoint is bit-identical to the original.
+**Storage:** Content-addressable storage (SHA-256 + gzip). Same file across checkpoints = stored once. Binary files included -- a restored checkpoint is bit-identical to the original.
 
 **Performance:** Background worker via `spawn(detached)`. MCP tool returns in <5ms. Worker runs independently. Only `vigil_restore` is synchronous (must write files before Claude proceeds).
 
 **Disk honesty:** Every tool response shows `vigil: 2/3 | quicksave: 3m ago | 273 MB`. No hidden costs. 3 checkpoint slots by default. `.vigilignore` for excluding paths you don't need.
 
-**Artifact preservation:** On restore, files that would be overwritten or lost (modified since checkpoint, or newly created) are preserved in `.claude/vigil/artifacts/`. Nothing is ever deleted — you can always recover displaced work.
+**Artifact preservation:** On restore, files that would be overwritten or lost (modified since checkpoint, or newly created) are preserved in `.claude/vigil/artifacts/`. Nothing is ever deleted -- you can always recover displaced work.
 
 ```
                   v1.0        v1.1        v1.2      objects/
@@ -351,7 +354,7 @@ How [claude-vigil-mcp](https://github.com/Vvkmnn/claude-vigil-mcp) [stores](http
                   ────        ────        ────
   new objects:    5           1           1     =   7 (not 15)
 
-  ══════ same SHA-256 across checkpoints — stored once, referenced many
+  ══════ same SHA-256 across checkpoints -- stored once, referenced many
 ```
 
 ```
@@ -374,7 +377,7 @@ How [claude-vigil-mcp](https://github.com/Vvkmnn/claude-vigil-mcp) [stores](http
 - [LCS unified diffs](https://github.com/Vvkmnn/claude-vigil-mcp/blob/main/src/snapshot.ts#L333) (`generateUnifiedDiff`): O(n×m) longest common subsequence with 3-line context hunks.
 - [cross-checkpoint search](https://github.com/Vvkmnn/claude-vigil-mcp/blob/main/src/snapshot.ts#L676) (`diffCheckpoint` search mode): Iterate checkpoints → resolve file hash → gunzip → line scan with ±2 context.
 - [background snapshots](https://github.com/Vvkmnn/claude-vigil-mcp/blob/main/src/worker.ts#L28) (`worker.ts`): `spawn(detached)` with `.in-progress` lockfile, <5ms return to Claude.
-- [destructive command detection](https://github.com/Vvkmnn/claude-vigil-mcp/blob/main/hooks/pre-bash.js#L11) (`pre-bash.js`): Regex match on `rm|mv|sed -i|git checkout|git reset|>` triggers auto-quicksave.
+
 
 **Disk usage:** Vigil auto-skips derived directories (`node_modules/`, `dist/`, `target/`, `venv/`, etc.) detected from `.gitignore` and common patterns. Only source files are checkpointed.
 
@@ -384,7 +387,7 @@ How [claude-vigil-mcp](https://github.com/Vvkmnn/claude-vigil-mcp) [stores](http
 | Rust project   | 2.5 GB   | ~5 MB       | ~3 MB          | ~100 KB     |
 | Python project | 350 MB   | ~3 MB       | ~2 MB          | ~50 KB      |
 
-After restore, vigil reports which derived dirs exist but weren't restored — Claude rebuilds them (`npm install`, `cargo build`, etc.). Edit `.claude/vigil/.vigilignore` to adjust what gets skipped.
+After restore, vigil reports which derived dirs exist but weren't restored -- Claude rebuilds them (`npm install`, `cargo build`, etc.). Edit `.claude/vigil/.vigilignore` to adjust what gets skipped.
 
 **Architecture:**
 
@@ -398,36 +401,35 @@ claude-vigil-mcp/
 │   ├── store.ts       # CAS: hash, store, read, gc, disk usage
 │   ├── snapshot.ts    # create, restore, diff, list, delete
 │   └── worker.ts      # background snapshot process
-├── hooks/
-│   └── pre-bash.js    # PreToolUse: quicksave before destructive bash (CJS)
-├── skills/
-│   └── vigil-checkpointing/
-│       └── SKILL.md   # optional skill for proactive checkpointing
+├── .claude/
+│   └── skills/
+│       └── claude-vigil/
+│           └── SKILL.md   # optional skill for proactive checkpointing
 └── test/
     └── index.test.ts  # 73 tests
 ```
 
-**Design decisions:**
+**Design principles:**
 
-- **No git dependency** — pure Node.js built-ins (crypto, zlib, fs)
-- **Perfect snapshots** — every file captured, no size/binary filtering
-- **CAS + gzip** — 3.5x leaner than hard links, automatic dedup
-- **Background execution** — Claude never blocks on snapshot creation
-- **3-slot limit** — conservative default prevents runaway storage
-- **Stateless server** — reads manifest from disk each call, no in-memory state to lose
-- **Artifact preservation** — displaced files saved on restore, nothing ever lost
-- **Cross-platform** — macOS, Linux, Windows. No shell dependencies
+- **No git dependency** -- pure Node.js built-ins (crypto, zlib, fs)
+- **Perfect snapshots** -- every file captured, no size/binary filtering
+- **CAS + gzip** -- 3.5x leaner than hard links, automatic dedup
+- **Background execution** -- Claude never blocks on snapshot creation
+- **3-slot limit** -- conservative default prevents runaway storage
+- **Stateless server** -- reads manifest from disk each call, no in-memory state to lose
+- **Artifact preservation** -- displaced files saved on restore, nothing ever lost
+- **Cross-platform** -- macOS, Linux, Windows. No shell dependencies
 
 **Design influences:**
 
-- [Content-addressable storage](https://en.wikipedia.org/wiki/Content-addressable_storage) — same content = same address, automatic deduplication
-- [Mark-and-sweep garbage collection](https://en.wikipedia.org/wiki/Tracing_garbage_collection#Na%C3%AFve_mark-and-sweep) — reference counting alternative for CAS cleanup
-- [Longest common subsequence](https://en.wikipedia.org/wiki/Longest_common_subsequence) — foundation of unified diff generation
-- [Git object model](https://git-scm.com/book/en/v2/Git-Internals-Git-Objects) — inspiration for hash-sharded storage (vigil uses SHA-256 + gzip instead of git's SHA-1 + zlib)
+- [Content-addressable storage](https://en.wikipedia.org/wiki/Content-addressable_storage) -- same content = same address, automatic deduplication
+- [Mark-and-sweep garbage collection](https://en.wikipedia.org/wiki/Tracing_garbage_collection#Na%C3%AFve_mark-and-sweep) -- reference counting alternative for CAS cleanup
+- [Longest common subsequence](https://en.wikipedia.org/wiki/Longest_common_subsequence) -- foundation of unified diff generation
+- [Git object model](https://git-scm.com/book/en/v2/Git-Internals-Git-Objects) -- inspiration for hash-sharded storage (vigil uses SHA-256 + gzip instead of git's SHA-1 + zlib)
 
 ## alternatives
 
-Every existing checkpoint tool — built-in or third-party — only tracks file edits made through the editor's own API. When Claude runs `sed -i`, a Python script overwrites a config, or a build tool corrupts output, those changes are invisible and unrecoverable.
+Every existing checkpoint tool -- built-in or third-party -- only tracks file edits made through the editor's own API. When Claude runs `sed -i`, a Python script overwrites a config, or a build tool corrupts output, those changes are invisible and unrecoverable.
 
 | Feature                       | **vigil**                   | /rewind                                                               | Rewind-MCP | claude-code-rewind | Checkpoints app | Cursor       |
 | ----------------------------- | --------------------------- | --------------------------------------------------------------------- | ---------- | ------------------ | --------------- | ------------ |
@@ -443,29 +445,26 @@ Every existing checkpoint tool — built-in or third-party — only tracks file 
 | **Dependencies**              | **0 (Node built-ins)**      | N/A                                                                   | Node.js    | Python + SQLite    | Desktop app     | N/A          |
 | **Disk visibility**           | **Every response**          | Hidden                                                                | Manual     | Manual             | Manual          | Hidden       |
 
-**[Claude Code /rewind](https://code.claude.com/docs/en/checkpointing)** — Built-in checkpoint system. Only tracks file edits made through Claude's own tools — `sed -i`, build scripts, and external processes are invisible. No named checkpoints, no content diffs, no search. Blocking saves that pause the session. Not yet available via MCP ([#16976](https://github.com/anthropics/claude-code/issues/16976)).
+**[Claude Code /rewind](https://code.claude.com/docs/en/checkpointing)** -- Built-in checkpoint system. Only tracks file edits made through Claude's own tools -- `sed -i`, build scripts, and external processes are invisible. No named checkpoints, no content diffs, no search. Blocking saves that pause the session. Not yet available via MCP ([#16976](https://github.com/anthropics/claude-code/issues/16976)).
 
-**[Rewind-MCP](https://github.com/khalilbalaree/Rewind-MCP)** — Third-party MCP server with stack-based undo. Provides MCP access but doesn't track external changes (bash, scripts, builds). No content diffs, no search across checkpoints, no dedup storage. Blocking saves.
+**[Rewind-MCP](https://github.com/khalilbalaree/Rewind-MCP)** -- Third-party MCP server with stack-based undo. Provides MCP access but doesn't track external changes (bash, scripts, builds). No content diffs, no search across checkpoints, no dedup storage. Blocking saves.
 
-**[claude-code-rewind](https://github.com/holasoymalva/claude-code-rewind)** — Python-based snapshot tool with SQLite metadata and visual diffs. Requires Python + SQLite. Doesn't track external changes. No cross-checkpoint search, no artifact preservation, no background saves. CLI-only (no MCP integration).
+**[claude-code-rewind](https://github.com/holasoymalva/claude-code-rewind)** -- Python-based snapshot tool with SQLite metadata and visual diffs. Requires Python + SQLite. Doesn't track external changes. No cross-checkpoint search, no artifact preservation, no background saves. CLI-only (no MCP integration).
 
-**[Checkpoints app](https://claude-checkpoints.com/)** — macOS desktop app that monitors projects for file changes. Background saves but macOS-only, no content diffs, no search, no MCP integration. Stores full copies of each checkpoint (no dedup), so disk usage grows linearly.
+**[Checkpoints app](https://claude-checkpoints.com/)** -- macOS desktop app that monitors projects for file changes. Background saves but macOS-only, no content diffs, no search, no MCP integration. Stores full copies of each checkpoint (no dedup), so disk usage grows linearly.
 
-**[Cursor checkpoints](https://stevekinney.com/courses/ai-development/cursor-checkpoints)** — Built-in to Cursor. Zips project state before each AI edit. No named checkpoints, no content diffs, no search, no external change tracking. Hidden from disk, blocking saves, not programmable.
+**[Cursor checkpoints](https://stevekinney.com/courses/ai-development/cursor-checkpoints)** -- Built-in to Cursor. Zips project state before each AI edit. No named checkpoints, no content diffs, no search, no external change tracking. Hidden from disk, blocking saves, not programmable.
 
 Three implementation approaches were evaluated before settling on content-addressable storage:
 
-- **Shadow git repo** (`git --git-dir=.claude/vigil/.git --work-tree=.`) — wraps git for dedup, diff, and restore. 6 failure modes: self-tracking recursion, unbounded binary bloat, concurrent `index.lock` conflicts, overlay on restore (doesn't delete files added after checkpoint), `git clean` destroying project files, and `GIT_DIR`/`GIT_WORK_TREE` env var interference from parent processes.
-- **Hard-link Time Machine pattern** — directory trees with unchanged files hard-linked (zero per-file cost). Battle-tested by macOS Time Machine, but 20 checkpoints of 1000 files = 20,000 directory entries. CAS + gzip is 3.5x leaner and deduplicates content across checkpoints for free.
-- **rsync --link-dest** — same hard-link idea in ~30 lines. No built-in diff capability, losing the unified diffs and cross-checkpoint search that make `vigil_diff` useful.
-
-**Part of**: [claude-emporium](https://github.com/Vvkmnn/claude-emporium) - Claude Code plugins with a Roman theme.
+- **Shadow git repo** (`git --git-dir=.claude/vigil/.git --work-tree=.`) -- wraps git for dedup, diff, and restore. 6 failure modes: self-tracking recursion, unbounded binary bloat, concurrent `index.lock` conflicts, overlay on restore (doesn't delete files added after checkpoint), `git clean` destroying project files, and `GIT_DIR`/`GIT_WORK_TREE` env var interference from parent processes.
+- **Hard-link Time Machine pattern** -- directory trees with unchanged files hard-linked (zero per-file cost). Battle-tested by macOS Time Machine, but 20 checkpoints of 1000 files = 20,000 directory entries. CAS + gzip is 3.5x leaner and deduplicates content across checkpoints for free.
+- **rsync --link-dest** -- same hard-link idea in ~30 lines. No built-in diff capability, losing the unified diffs and cross-checkpoint search that make `vigil_diff` useful.
 
 ## development
 
 ```bash
-git clone https://github.com/Vvkmnn/claude-vigil-mcp
-cd claude-vigil-mcp
+git clone https://github.com/Vvkmnn/claude-vigil-mcp && cd claude-vigil-mcp
 npm install && npm run build
 npm test
 ```
@@ -488,12 +487,27 @@ npm test
 
 Pre-commit hooks via [husky](https://typicode.github.io/husky/) run `lint-staged` (prettier + eslint) on staged `.ts` files.
 
+Contributing:
+
+- Fork the repository and create feature branches
+- Follow TypeScript strict mode and [MCP protocol](https://modelcontextprotocol.io/specification) standards
+
+Learn from examples:
+
+- [Official MCP servers](https://github.com/modelcontextprotocol/servers) for reference implementations
+- [TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) for best practices
+- [Creating Node.js modules](https://docs.npmjs.com/creating-node-js-modules) for npm package development
+
 ## license
 
 [MIT](LICENSE)
 
 <hr>
 
-<p align="center"><a href="https://en.wikipedia.org/wiki/Claudius#/media/File:Lebayle_-_Claudius.jpg"><img src="logo/lebayle-claudius.jpg" alt="Claudius Proclaimed Emperor — Charles Lebayle" width="340"></a></p>
+<p align="center"><a href="https://en.wikipedia.org/wiki/Claudius#/media/File:Lebayle_-_Claudius.jpg"><img src="logo/lebayle-claudius.jpg" alt="Claudius Proclaimed Emperor -- Charles Lebayle" width="340"></a></p>
 
-_**[Claudius Proclaimed Emperor](https://en.wikipedia.org/wiki/Claudius#/media/File:Lebayle_-_Claudius.jpg)** by **[Charles Lebayle](https://en.wikipedia.org/wiki/Charles_Lebayle)** (1886). Claudius expanded the Vigiles Urbani from firefighters into Rome's night watch — guardians who patrolled the city, preserved order, and ensured nothing was lost to the dark._
+<p align="center">
+
+_**[Claudius Proclaimed Emperor](https://en.wikipedia.org/wiki/Claudius#/media/File:Lebayle_-_Claudius.jpg)** by **[Charles Lebayle](https://en.wikipedia.org/wiki/Charles_Lebayle)** (1886). Claudius expanded the Vigiles Urbani from firefighters into Rome's night watch -- guardians who patrolled the city, preserved order, and ensured nothing was lost to the dark._
+
+</p>
