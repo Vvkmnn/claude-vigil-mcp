@@ -52,7 +52,14 @@ export interface DiskUsage {
 
 /** Result of creating a checkpoint. Success variants differ for manual vs quicksave. */
 export type CreateCheckpointResult =
-  | { name: string; type: string; created: string; fileCount: number; newObjects: number; usage: DiskUsage }
+  | {
+      name: string;
+      type: string;
+      created: string;
+      fileCount: number;
+      newObjects: number;
+      usage: DiskUsage;
+    }
   | { name: string; type: string; created: string; fileCount: number }
   | { error: 'slots_full'; max: number; checkpoints: { name: string; created: string }[] }
   | { error: 'duplicate_name'; name: string };
@@ -113,10 +120,14 @@ export type DiffResult =
   | { search: string; file: string; hits: SearchHit[] };
 
 /** Result of listing files in a checkpoint. */
-export type ListResult = { error: string; name?: string } | { name: string; files: string[]; totalFiles: number };
+export type ListResult =
+  | { error: string; name?: string }
+  | { name: string; files: string[]; totalFiles: number };
 
 /** Result of deleting a checkpoint. Includes GC stats for reclaimed space. */
-export type DeleteResult = { error: 'not_found'; name: string } | { deleted: string; gc: GCResult; usage: DiskUsage };
+export type DeleteResult =
+  | { error: 'not_found'; name: string }
+  | { deleted: string; gc: GCResult; usage: DiskUsage };
 
 // ── Callbacks ─────────────────────────────────────────────────────
 

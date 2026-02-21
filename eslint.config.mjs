@@ -1,5 +1,6 @@
-import eslint from '@eslint/js';
-import tseslint from 'typescript-eslint';
+// @ts-check
+import eslint from "@eslint/js";
+import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   eslint.configs.recommended,
@@ -12,29 +13,19 @@ export default tseslint.config(
       },
     },
     rules: {
-      // stdout is JSON-RPC in MCP servers — no console except console.error
-      'no-console': ['error', { allow: ['error'] }],
-
-      // MCP handlers must be async even if body is synchronous
-      '@typescript-eslint/require-await': 'off',
-
-      // Useful but too noisy for initial adoption — warn only
-      '@typescript-eslint/explicit-function-return-type': 'warn',
-
-      // Allow numbers and booleans in template literals
-      '@typescript-eslint/restrict-template-expressions': ['error', {
-        allowNumber: true,
-        allowBoolean: true,
-      }],
-
-      // Already enforced by tsconfig strict
-      '@typescript-eslint/no-unused-vars': ['error', {
-        argsIgnorePattern: '^_',
-        varsIgnorePattern: '^_',
-      }],
+      // MCP servers use stdout for JSON-RPC — console.log corrupts the stream
+      "no-console": ["error", { allow: ["error"] }],
+      // Allow underscore-prefixed unused args (common in callbacks)
+      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
+      // Warn on missing return types — helps readability
+      "@typescript-eslint/explicit-function-return-type": "warn",
+      // Numbers and booleans are safe in template literals
+      "@typescript-eslint/restrict-template-expressions": ["error", { allowNumber: true, allowBoolean: true }],
+      // MCP SDK request handlers must be async per interface contract
+      "@typescript-eslint/require-await": "off",
     },
   },
   {
-    ignores: ['dist/', 'node_modules/', 'eslint.config.mjs'],
+    ignores: ["dist/", "node_modules/", "*.js", "*.mjs"],
   },
 );

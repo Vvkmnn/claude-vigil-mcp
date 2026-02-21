@@ -1,0 +1,65 @@
+# Source files
+src/
+tsconfig.json
+
+# Development files
+.github/
+.git/
+.gitignore
+.husky/
+.releaserc.json
+.nvmrc
+node_modules/
+
+# Dev configs
+.prettierrc
+eslint.config.mjs
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# Testing
+test/
+tests/
+*.test.js
+*.test.ts
+*.spec.js
+*.spec.ts
+coverage/
+.nyc_output/
+
+# Build artifacts not needed
+*.tsbuildinfo
+
+# Documentation (except README)
+docs/
+*.md
+!README.md
+
+# Local development
+.env
+.env.local
+.env.*.local
+.claude/
+.mcp.json
+
+# Dev artifacts
+demo/
+logo/
+*.cast
+*.tgz
+*.png
+*.tmp

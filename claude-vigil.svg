@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 108 96" width="220" height="220">
+  <style>
+    .toga-back { animation: back-sway 3s ease-in-out infinite; transform-origin: 16px 37px; }
+    .band-1 { animation: band1-sway 3.2s ease-in-out infinite; }
+    .band-2 { animation: band2-sway 2.9s ease-in-out infinite; }
+    .band-3 { animation: band3-sway 3.6s ease-in-out infinite; }
+    .band-4 { animation: band4-sway 2.5s ease-in-out infinite; }
+    .band-5 { animation: band5-sway 3.1s ease-in-out infinite; }
+    .amphora-arm { animation: amphora-hold 3s ease-in-out infinite; transform-origin: 86px 48px; }
+
+    @keyframes back-sway { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-2.5deg); } }
+    @keyframes band1-sway { 0%, 100% { transform: translateX(0); } 30% { transform: translateX(-0.4px); } 65% { transform: translateX(0.15px); } }
+    @keyframes band2-sway { 0%, 100% { transform: translateX(0); } 35% { transform: translateX(0.3px); } 70% { transform: translateX(-0.1px); } }
+    @keyframes band3-sway { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-0.25px); } 60% { transform: translateX(0.2px); } }
+    @keyframes band4-sway { 0%, 100% { transform: translateX(0); } 40% { transform: translateX(0.35px); } 75% { transform: translateX(-0.15px); } }
+    @keyframes band5-sway { 0%, 100% { transform: translateX(0); } 30% { transform: translateX(-0.2px); } 70% { transform: translateX(0.1px); } }
+    @keyframes amphora-hold { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(1deg); } }
+  </style>
+
+  <!-- Back toga drape -->
+  <g class="toga-back">
+    <polygon points="16,36 10,36 6,72 8,82 20,82 22,68" fill="#9B1B1B"/>
+    <polygon points="16,36 12,36 8,72 10,78 16,68" fill="#7A1515" opacity="0.7"/>
+  </g>
+
+  <!-- Body -->
+  <rect x="18" y="32" width="64" height="4" fill="#E07C4C"/>
+  <rect x="14" y="36" width="72" height="32" fill="#E07C4C"/>
+
+  <!-- Ears -->
+  <rect x="22" y="18" width="8" height="14" fill="#E07C4C"/>
+  <rect x="70" y="18" width="8" height="14" fill="#E07C4C"/>
+
+  <!-- Legs -->
+  <rect x="24" y="68" width="12" height="14" fill="#E07C4C"/>
+  <rect x="64" y="68" width="12" height="14" fill="#E07C4C"/>
+
+  <!-- Front toga (strap + bands) -->
+  <g class="toga-front">
+    <g class="band-5">
+      <path d="M18,58 Q14,48 12,37 L20,37 Q20,48 34,63 Z" fill="#9B1B1B"/>
+      <path d="M20,58 Q16,48 13,38 L19,38 Q19,48 30,61 Z" fill="#7A1515" opacity="0.4"/>
+      <line x1="24" y1="59" x2="17" y2="39" stroke="#5E1010" stroke-width="0.6" opacity="0.5"/>
+    </g>
+    <g class="band-1"><path d="M12,65 Q38,80 86,69 L86,76 Q40,85 12,73 Z" fill="#5E1010"/></g>
+    <g class="band-2"><path d="M12,62 Q60,75 87,62 L87,69 Q58,79 12,69 Z" fill="#7A1515"/></g>
+    <g class="band-3"><path d="M12,59 Q48,70 87,58 L87,65 Q50,76 12,66 Z" fill="#8B1A1A"/></g>
+    <g class="band-4"><path d="M12,56 Q36,68 87,56 L87,63 Q38,73 12,63 Z" fill="#9B1B1B"/></g>
+    <g class="band-5">
+      <path d="M12,53 Q56,64 87,52 L87,59 Q54,69 12,60 Z" fill="#A52222"/>
+      <path d="M12,53 Q56,64 87,52" stroke="#C03030" stroke-width="0.8" fill="none" opacity="0.5"/>
+    </g>
+  </g>
+
+  <!-- Fibula -->
+  <circle cx="16" cy="37" r="4" fill="#DAA520" stroke="#8B6914" stroke-width="0.6"/>
+
+  <!-- Eyes -->
+  <rect x="34" y="42" width="8" height="10" fill="#000000"/>
+  <rect x="66" y="42" width="8" height="10" fill="#000000"/>
+
+  <!-- Left arm (empty) -->
+  <rect x="2" y="44" width="12" height="8" fill="#E07C4C"/>
+
+  <!-- Right arm + amphora -->
+  <g class="amphora-arm">
+    <rect x="86" y="44" width="12" height="8" fill="#E07C4C"/>
+    <!-- Amphora (large, matching emoji style) -->
+    <g>
+      <!-- Amphora lip (wide flared rim) -->
+      <rect x="86" y="14" width="12" height="3" rx="1.5" fill="#D4896A" stroke="#A05A2C" stroke-width="0.5"/>
+      <!-- Amphora neck (narrow) -->
+      <rect x="88.5" y="17" width="7" height="6" rx="1.5" fill="#C67B4E" stroke="#A05A2C" stroke-width="0.4"/>
+      <!-- Amphora body (wide belly) -->
+      <ellipse cx="92" cy="36" rx="10" ry="15" fill="#C67B4E" stroke="#A05A2C" stroke-width="0.6"/>
+      <!-- Amphora body highlight -->
+      <ellipse cx="89" cy="33" rx="4" ry="10" fill="#D4896A" opacity="0.4"/>
+      <!-- Amphora body shadow -->
+      <ellipse cx="95" cy="37" rx="3" ry="9" fill="#A05A2C" opacity="0.15"/>
+      <!-- Amphora base (pointed bottom) -->
+      <polygon points="88,50 96,50 93.5,58 90.5,58" fill="#B06830" stroke="#A05A2C" stroke-width="0.4"/>
+      <!-- Amphora point -->
+      <ellipse cx="92" cy="58" rx="2" ry="1.2" fill="#A05A2C"/>
+      <!-- Left handle (large curved) -->
+      <path d="M88.5,18 Q81,26 82,36" fill="none" stroke="#A05A2C" stroke-width="2.2" stroke-linecap="round"/>
+      <path d="M88.5,18 Q81,26 82,36" fill="none" stroke="#D4896A" stroke-width="1" opacity="0.35"/>
+      <!-- Right handle (large curved) -->
+      <path d="M95.5,18 Q99,26 99,36" fill="none" stroke="#A05A2C" stroke-width="2.2" stroke-linecap="round"/>
+      <path d="M95.5,18 Q99,26 99,36" fill="none" stroke="#D4896A" stroke-width="1" opacity="0.35"/>
+      <!-- Decorative bands on body -->
+      <ellipse cx="92" cy="28" rx="9" ry="1.2" fill="none" stroke="#8B5A2B" stroke-width="0.6" opacity="0.5"/>
+      <ellipse cx="92" cy="44" rx="8" ry="1" fill="none" stroke="#8B5A2B" stroke-width="0.5" opacity="0.5"/>
+      <!-- Greek key pattern hint -->
+      <path d="M84,34 L85,34 L85,35 L84,35 M86,36 L87,36 L87,37 M84,38 L85,38" stroke="#8B5A2B" stroke-width="0.4" fill="none" opacity="0.4"/>
+    </g>
+  </g>
+</svg>

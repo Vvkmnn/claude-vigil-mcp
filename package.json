@@ -29,12 +29,18 @@
     "prepare": "husky || true"
   },
   "keywords": [
-    "mcp",
     "claude",
+    "claude-code",
+    "mcp",
+    "mcp-server",
     "checkpoint",
     "snapshot",
     "recovery",
-    "claude-code"
+    "npx",
+    "zero-install",
+    "anthropic",
+    "llm",
+    "developer-tools"
   ],
   "author": "Vvkmnn",
   "license": "MIT",
