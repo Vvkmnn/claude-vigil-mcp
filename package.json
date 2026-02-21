@@ -1,7 +1,7 @@
 {
   "name": "claude-vigil-mcp",
   "version": "0.1.1",
-  "description": "Checkpoint, snapshot, and file recovery MCP server for Claude Code",
+  "description": "An MCP server for checkpointing and file recovery in Claude Code",
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
@@ -9,8 +9,7 @@
   },
   "files": [
     "dist/",
-    "hooks/",
-    "skills/",
+    ".claude/skills/",
     "README.md",
     "LICENSE"
   ],
@@ -33,14 +32,26 @@
     "claude-code",
     "mcp",
     "mcp-server",
+    "model-context-protocol",
+    "anthropic",
+    "llm",
+    "ai",
+    "ai-tools",
+    "ai-agent",
     "checkpoint",
     "snapshot",
     "recovery",
+    "backup",
+    "file-recovery",
+    "undo",
+    "restore",
+    "version-control",
     "npx",
     "zero-install",
-    "anthropic",
-    "llm",
-    "developer-tools"
+    "cli",
+    "developer-tools",
+    "typescript",
+    "nodejs"
   ],
   "author": "Vvkmnn",
   "license": "MIT",
