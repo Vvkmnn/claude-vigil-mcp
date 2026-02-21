@@ -133,7 +133,9 @@ function parseGitignoreDirs(projectDir: string): string[] {
           .replace(/\/$/, '');
         if (clean.includes('*')) return false; // skip glob file patterns like *.pyc
         try {
-          return existsSync(join(projectDir, clean)) && statSync(join(projectDir, clean)).isDirectory();
+          return (
+            existsSync(join(projectDir, clean)) && statSync(join(projectDir, clean)).isDirectory()
+          );
         } catch {
           return false;
         }
@@ -278,7 +280,11 @@ function matchesIgnore(relPath: string, patterns: string[]): boolean {
  * Skips VCS internals, OS junk, and .vigilignore patterns.
  * No file size or binary filtering — captures everything.
  */
-export function walkProject(projectDir: string, callback: WalkCallback, ignorePatterns: string[] = []): void {
+export function walkProject(
+  projectDir: string,
+  callback: WalkCallback,
+  ignorePatterns: string[] = [],
+): void {
   function walk(dir: string): void {
     let entries;
     try {
@@ -330,7 +336,11 @@ function isBinary(buf: Buffer): boolean {
  * then groups changes into hunks with surrounding context lines.
  * Zero dependencies. Returns standard unified diff format with @@ headers.
  */
-export function generateUnifiedDiff(oldContent: string, newContent: string, filePath: string): string {
+export function generateUnifiedDiff(
+  oldContent: string,
+  newContent: string,
+  filePath: string,
+): string {
   const oldLines = oldContent.split('\n');
   const newLines = newContent.split('\n');
   const n = oldLines.length;
@@ -338,13 +348,15 @@ export function generateUnifiedDiff(oldContent: string, newContent: string, file
 
   // Build LCS (Longest Common Subsequence) table — O(n*m) space, fine for source files.
   // lcsTable[i][j] = length of LCS of oldLines[0..i-1] and newLines[0..j-1].
-  const lcsTable: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  const lcsTable: number[][] = Array.from({ length: n + 1 }, () =>
+    new Array<number>(m + 1).fill(0),
+  );
   for (let i = 1; i <= n; i++) {
     for (let j = 1; j <= m; j++) {
-      lcsTable[i]![j] =
+      lcsTable[i][j] =
         oldLines[i - 1] === newLines[j - 1]
-          ? lcsTable[i - 1]![j - 1]! + 1
-          : Math.max(lcsTable[i - 1]![j]!, lcsTable[i]![j - 1]!);
+          ? lcsTable[i - 1][j - 1] + 1
+          : Math.max(lcsTable[i - 1][j], lcsTable[i][j - 1]);
     }
   }
 
@@ -355,14 +367,14 @@ export function generateUnifiedDiff(oldContent: string, newContent: string, file
     j = m;
   while (i > 0 || j > 0) {
     if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
-      edits.push({ type: 'keep', oldIdx: i - 1, newIdx: j - 1, line: oldLines[i - 1]! });
+      edits.push({ type: 'keep', oldIdx: i - 1, newIdx: j - 1, line: oldLines[i - 1] });
       i--;
       j--;
-    } else if (j > 0 && (i === 0 || lcsTable[i]![j - 1]! >= lcsTable[i - 1]![j]!)) {
-      edits.push({ type: 'insert', oldIdx: i - 1, newIdx: j - 1, line: newLines[j - 1]! });
+    } else if (j > 0 && (i === 0 || lcsTable[i][j - 1] >= lcsTable[i - 1][j])) {
+      edits.push({ type: 'insert', oldIdx: i - 1, newIdx: j - 1, line: newLines[j - 1] });
       j--;
     } else {
-      edits.push({ type: 'delete', oldIdx: i - 1, newIdx: -1, line: oldLines[i - 1]! });
+      edits.push({ type: 'delete', oldIdx: i - 1, newIdx: -1, line: oldLines[i - 1] });
       i--;
     }
   }
@@ -370,13 +382,19 @@ export function generateUnifiedDiff(oldContent: string, newContent: string, file
 
   // Group edits into hunks with CONTEXT lines of surrounding context (standard = 3)
   const CONTEXT = 3;
-  type Hunk = { oldStart: number; oldCount: number; newStart: number; newCount: number; lines: string[] };
+  type Hunk = {
+    oldStart: number;
+    oldCount: number;
+    newStart: number;
+    newCount: number;
+    lines: string[];
+  };
   const hunks: Hunk[] = [];
   let hunk: Hunk | null = null;
   let lastChangeIdx = -999; // sentinel: no previous change
 
   for (let e = 0; e < edits.length; e++) {
-    const edit = edits[e]!;
+    const edit = edits[e];
     const isChange = edit.type !== 'keep';
 
     if (isChange) {
@@ -391,7 +409,7 @@ export function generateUnifiedDiff(oldContent: string, newContent: string, file
         let oPos = 0,
           nPos = 0;
         for (let k = 0; k < contextStart; k++) {
-          const kEdit = edits[k]!;
+          const kEdit = edits[k];
           if (kEdit.type === 'keep' || kEdit.type === 'delete') oPos++;
           if (kEdit.type === 'keep' || kEdit.type === 'insert') nPos++;
         }
@@ -399,7 +417,7 @@ export function generateUnifiedDiff(oldContent: string, newContent: string, file
         hunk.newStart = nPos + 1;
         // Add leading context lines
         for (let k = contextStart; k < e; k++) {
-          const kEdit = edits[k]!;
+          const kEdit = edits[k];
           if (kEdit.type === 'keep') {
             hunk.lines.push(' ' + kEdit.line);
             hunk.oldCount++;
@@ -483,9 +501,19 @@ export function createCheckpoint(
       ignorePatterns,
     );
 
-    manifest.quicksave = { name: '~quicksave', created: new Date().toISOString(), files, fileCount };
+    manifest.quicksave = {
+      name: '~quicksave',
+      created: new Date().toISOString(),
+      files,
+      fileCount,
+    };
     writeManifest(vigilDir, manifest);
-    return { name: '~quicksave', type: 'quicksave', created: manifest.quicksave.created, fileCount };
+    return {
+      name: '~quicksave',
+      type: 'quicksave',
+      created: manifest.quicksave.created,
+      fileCount,
+    };
   }
 
   // Check slot limit for named checkpoints
@@ -539,7 +567,7 @@ export function createCheckpoint(
 /** Format a timestamp for artifact directory names. Includes milliseconds for uniqueness. */
 function artifactTimestamp(): string {
   const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
+  const pad = (n: number): string => String(n).padStart(2, '0');
   const ms = String(d.getMilliseconds()).padStart(3, '0');
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}_${ms}`;
 }
@@ -626,7 +654,14 @@ export function restoreCheckpoint(projectDir: string, name: string): RestoreResu
 
   const usage = diskUsage(vigilDir);
   const artifactsRelDir = displaced.length > 0 ? `.claude/vigil/artifacts/${artifactsDirName}` : '';
-  return { restored: name, quicksaved: true, filesRestored, artifactsDir: artifactsRelDir, displaced, usage };
+  return {
+    restored: name,
+    quicksaved: true,
+    filesRestored,
+    artifactsDir: artifactsRelDir,
+    displaced,
+    usage,
+  };
 }
 
 /** Look up a checkpoint by name in the manifest. */
@@ -636,7 +671,12 @@ function findCheckpoint(manifest: Manifest, name: string): Checkpoint | null {
 }
 
 /** Build a FileChange from old and new content for a file. */
-function buildFileChange(vigilDir: string, relPath: string, cpHash: string, currentBuf: Buffer): FileChange {
+function buildFileChange(
+  vigilDir: string,
+  relPath: string,
+  cpHash: string,
+  currentBuf: Buffer,
+): FileChange {
   const cpBuf = readObject(vigilDir, cpHash);
   if (isBinary(cpBuf) || isBinary(currentBuf)) {
     return { path: relPath, diff: '', binary: true, linesAdded: 0, linesRemoved: 0 };
@@ -687,7 +727,7 @@ export function diffCheckpoint(
       const lines = content.split('\n');
       const matchingLines: string[] = [];
       for (let i = 0; i < lines.length; i++) {
-        if (lines[i]!.includes(opts.search)) {
+        if (lines[i].includes(opts.search)) {
           // Include 2 lines of context around match
           const start = Math.max(0, i - 2);
           const end = Math.min(lines.length - 1, i + 2);
@@ -752,12 +792,22 @@ export function diffCheckpoint(
         if (opts.summary) {
           modified.push({ path: relPath, diff: '', binary: false, linesAdded: 0, linesRemoved: 0 });
         } else {
-          const oldBuf = readObject(vigilDir, checkpoint.files[relPath]!);
-          const newBuf = readObject(vigilDir, other.files[relPath]!);
+          const oldBuf = readObject(vigilDir, checkpoint.files[relPath]);
+          const newBuf = readObject(vigilDir, other.files[relPath]);
           if (isBinary(oldBuf) || isBinary(newBuf)) {
-            modified.push({ path: relPath, diff: '', binary: true, linesAdded: 0, linesRemoved: 0 });
+            modified.push({
+              path: relPath,
+              diff: '',
+              binary: true,
+              linesAdded: 0,
+              linesRemoved: 0,
+            });
           } else {
-            const diff = generateUnifiedDiff(oldBuf.toString('utf8'), newBuf.toString('utf8'), relPath);
+            const diff = generateUnifiedDiff(
+              oldBuf.toString('utf8'),
+              newBuf.toString('utf8'),
+              relPath,
+            );
             const linesAdded = (diff.match(/^\+[^+]/gm) || []).length;
             const linesRemoved = (diff.match(/^-[^-]/gm) || []).length;
             modified.push({ path: relPath, diff, binary: false, linesAdded, linesRemoved });
@@ -855,7 +905,11 @@ export function listCheckpointFiles(projectDir: string, name: string, glob?: str
  * @param opts - Pass `{ all: true }` to delete all checkpoints and the quicksave.
  * @returns GC stats and disk usage, or error if checkpoint not found.
  */
-export function deleteCheckpoint(projectDir: string, name?: string, opts: { all?: boolean } = {}): DeleteResult {
+export function deleteCheckpoint(
+  projectDir: string,
+  name?: string,
+  opts: { all?: boolean } = {},
+): DeleteResult {
   const vigilDir = join(projectDir, '.claude', 'vigil');
   const manifest = readManifest(vigilDir);
 
@@ -868,12 +922,14 @@ export function deleteCheckpoint(projectDir: string, name?: string, opts: { all?
     return { deleted: 'all', gc, usage };
   }
 
+  if (!name) return { error: 'not_found', name: '' };
+
   const idx = manifest.checkpoints.findIndex((c) => c.name === name);
-  if (idx === -1) return { error: 'not_found', name: name! };
+  if (idx === -1) return { error: 'not_found', name };
 
   manifest.checkpoints.splice(idx, 1);
   writeManifest(vigilDir, manifest);
   const gc = gcObjects(vigilDir, manifest);
   const usage = diskUsage(vigilDir);
-  return { deleted: name!, gc, usage };
+  return { deleted: name, gc, usage };
 }

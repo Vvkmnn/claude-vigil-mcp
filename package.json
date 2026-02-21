@@ -1,32 +1,32 @@
 {
   "name": "claude-vigil-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Checkpoint, snapshot, and file recovery MCP server for Claude Code",
   "type": "module",
-  "main": "dist/src/index.js",
-  "types": "dist/src/index.d.ts",
+  "main": "./dist/index.js",
   "bin": {
-    "claude-vigil-mcp": "dist/src/index.js"
+    "claude-vigil-mcp": "./dist/index.js"
   },
-  "files": ["dist", "hooks", "skills", "LICENSE", "README.md"],
+  "files": [
+    "dist/",
+    "hooks/",
+    "skills/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "build": "tsc",
-    "prebuild": "rm -rf dist",
-    "start": "node dist/src/index.js",
-    "test": "npm run build && node --test dist/test/index.test.js",
+    "build": "tsc && chmod +x dist/index.js",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "clean": "rm -rf dist",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format": "prettier --write src/",
+    "format:check": "prettier --check src/",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "zod": "^3.24.0"
-  },
-  "engines": {
-    "node": ">=20.0.0"
+    "test": "npm run typecheck && npm run lint",
+    "prepublishOnly": "npm run build && npm run lint && npm run format:check",
+    "prepare": "husky || true"
   },
   "keywords": [
     "mcp",
@@ -36,20 +36,45 @@
     "recovery",
     "claude-code"
   ],
-  "license": "MIT",
   "author": "Vvkmnn",
-  "homepage": "https://github.com/Vvkmnn/claude-vigil-mcp#readme",
-  "bugs": { "url": "https://github.com/Vvkmnn/claude-vigil-mcp/issues" },
+  "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Vvkmnn/claude-vigil-mcp"
+    "url": "git+https://github.com/Vvkmnn/claude-vigil-mcp.git"
+  },
+  "homepage": "https://github.com/Vvkmnn/claude-vigil-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/Vvkmnn/claude-vigil-mcp/issues"
+  },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/Vvkmnn"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.28.0",
     "@types/node": "^25.3.0",
     "eslint": "^9.28.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
     "prettier": "^3.5.3",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.33.1"
+  },
+  "lint-staged": {
+    "src/**/*.ts": [
+      "prettier --write",
+      "eslint --fix"
+    ]
   }
 }

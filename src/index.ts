@@ -10,10 +10,14 @@
  *   - `vigil_delete` — Delete a checkpoint and reclaim disk space via GC.
  */
 
+import { createRequire } from 'module';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json') as { version: string };
 import { z } from 'zod';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   readManifest,
@@ -36,6 +40,33 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${parseFloat((bytes / 1024).toFixed(1))} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${parseFloat((bytes / (1024 * 1024)).toFixed(1))} MB`;
   return `${parseFloat((bytes / (1024 * 1024 * 1024)).toFixed(1))} GB`;
+}
+
+/** Get artifact directory info: count of restore-artifact dirs and total size */
+function getArtifactInfo(vigilDir: string): { count: number; totalBytes: number; dirs: string[] } {
+  const artifactsBase = join(vigilDir, 'artifacts');
+  if (!existsSync(artifactsBase)) return { count: 0, totalBytes: 0, dirs: [] };
+  const entries = readdirSync(artifactsBase, { withFileTypes: true }).filter((e) =>
+    e.isDirectory(),
+  );
+  let totalBytes = 0;
+  // Shallow size estimate: sum file sizes in each artifact dir (1 level deep)
+  for (const entry of entries) {
+    const dirPath = join(artifactsBase, entry.name);
+    try {
+      for (const file of readdirSync(dirPath, { recursive: true })) {
+        try {
+          const s = statSync(join(dirPath, String(file)));
+          if (s.isFile()) totalBytes += s.size;
+        } catch {
+          /* skip unreadable */
+        }
+      }
+    } catch {
+      /* skip unreadable dirs */
+    }
+  }
+  return { count: entries.length, totalBytes, dirs: entries.map((e) => e.name) };
 }
 
 function timeAgo(isoDate: string): string {
@@ -63,12 +94,17 @@ function statusLine(projectDir: string): string {
 function fmt(header: string, body: string[] | null | undefined, projectDir?: string): string {
   const status = projectDir ? statusLine(projectDir) : '';
   if (!body || body.length === 0) {
-    return status ? `\u{1F3FA} \u2501\u2501 ${header} \u2501\u2501 ${status}` : `\u{1F3FA} \u2501\u2501 ${header}`;
+    return status
+      ? `\u{1F3FA} \u2501\u2501 ${header} \u2501\u2501 ${status}`
+      : `\u{1F3FA} \u2501\u2501 ${header}`;
   }
   const lines = body.filter(Boolean);
-  const top = status ? `\u{1F3FA} \u250F\u2501 ${header} \u2501\u2501 ${status}` : `\u{1F3FA} \u250F\u2501 ${header}`;
+  const top = status
+    ? `\u{1F3FA} \u250F\u2501 ${header} \u2501\u2501 ${status}`
+    : `\u{1F3FA} \u250F\u2501 ${header}`;
+  if (lines.length === 0) return top;
   const mid = lines.slice(0, -1).map((l) => `   \u2503 ${l}`);
-  const bot = `   \u2517 ${lines[lines.length - 1]}`;
+  const bot = `   \u2517 ${lines[lines.length - 1] ?? ''}`;
   return [top, ...mid, bot].join('\n');
 }
 
@@ -81,7 +117,13 @@ function getProjectDir(): string {
 
 // ── MCP Server ────────────────────────────────────────────────────
 
-const server = new McpServer({ name: 'claude-vigil-mcp', version: '0.1.0' });
+const server = new McpServer(
+  { name: 'claude-vigil-mcp', version },
+  {
+    instructions:
+      'Claude Vigil creates project checkpoints for safe rollback. Use vigil_save before risky changes, vigil_list to see checkpoints and artifact status, vigil_diff to compare states or search history, vigil_restore to roll back (displaced files are preserved in .claude/vigil/artifacts/ — vigil never deletes artifacts, ask the user before cleaning them up), vigil_delete to reclaim checkpoint space.',
+  },
+);
 
 // ── vigil_save ────────────────────────────────────────────────────
 
@@ -90,7 +132,10 @@ server.tool(
   'Create a named checkpoint of the entire project. Runs in background — returns immediately. If slots are full, DO NOT auto-retry — ask the user whether to delete an existing checkpoint or increase capacity.',
   {
     name: z.string().describe('Checkpoint name (e.g., "before-refactor", "v1.0")'),
-    description: z.string().optional().describe('What this checkpoint captures (shown in vigil_list)'),
+    description: z
+      .string()
+      .optional()
+      .describe('What this checkpoint captures (shown in vigil_list)'),
     max_checkpoints: z
       .number()
       .int()
@@ -115,14 +160,19 @@ server.tool(
 
     // Check slot limit
     if (manifest.checkpoints.length >= max) {
-      const names = manifest.checkpoints.map((c) => `${c.name} (${timeAgo(c.created)})`).join(' \u00B7 ');
+      const names = manifest.checkpoints
+        .map((c) => `${c.name} (${timeAgo(c.created)})`)
+        .join(' \u00B7 ');
       return {
         content: [
           {
             type: 'text' as const,
             text: fmt(
               `${max}/${max} full — ask the user before proceeding`,
-              [names, `ASK the user: delete one with vigil_delete, or increase capacity with max_checkpoints?`],
+              [
+                names,
+                `ASK the user: delete one with vigil_delete, or increase capacity with max_checkpoints?`,
+              ],
               projectDir,
             ),
           },
@@ -159,7 +209,9 @@ server.tool(
     // Synchronous snapshot — confirmed before returning
     const result = createCheckpoint(projectDir, name, 'manual', description);
     if ('error' in result) {
-      return { content: [{ type: 'text' as const, text: fmt(`error: ${result.error}`, null, projectDir) }] };
+      return {
+        content: [{ type: 'text' as const, text: fmt(`error: ${result.error}`, null, projectDir) }],
+      };
     }
     const saveHeader = `saved "${name}" \u2501\u2501 ${'fileCount' in result ? result.fileCount : 0} files \u00B7 ${'usage' in result ? formatBytes(result.usage.totalBytes) : ''}`;
 
@@ -175,7 +227,12 @@ server.tool(
     }
 
     return {
-      content: [{ type: 'text' as const, text: fmt(saveHeader, saveLines.length > 0 ? saveLines : null, projectDir) }],
+      content: [
+        {
+          type: 'text' as const,
+          text: fmt(saveHeader, saveLines.length > 0 ? saveLines : null, projectDir),
+        },
+      ],
     };
   },
 );
@@ -196,7 +253,9 @@ server.tool(
     if (name) {
       const result = listCheckpointFiles(projectDir, name, glob);
       if ('error' in result) {
-        return { content: [{ type: 'text' as const, text: fmt(`"${name}" not found`, null, projectDir) }] };
+        return {
+          content: [{ type: 'text' as const, text: fmt(`"${name}" not found`, null, projectDir) }],
+        };
       }
       const lines = result.files.slice(0, 50);
       if (result.files.length > 50) lines.push(`... and ${result.files.length - 50} more`);
@@ -218,7 +277,11 @@ server.tool(
         content: [
           {
             type: 'text' as const,
-            text: fmt('no checkpoints yet \u2501\u2501 use vigil_save to create one', null, projectDir),
+            text: fmt(
+              'no checkpoints yet \u2501\u2501 use vigil_save to create one',
+              null,
+              projectDir,
+            ),
           },
         ],
       };
@@ -236,9 +299,24 @@ server.tool(
       lines.push('(snapshotting in progress...)');
     }
 
+    // Show artifact directories from previous restores
+    const artifactInfo = getArtifactInfo(vigilDir);
+    if (artifactInfo.count > 0) {
+      lines.push('');
+      lines.push(
+        `artifacts: ${artifactInfo.count} restore${artifactInfo.count !== 1 ? 's' : ''} preserved (${formatBytes(artifactInfo.totalBytes)})`,
+      );
+      lines.push('  displaced files from vigil_restore — review and delete when no longer needed');
+      lines.push(`  location: .claude/vigil/artifacts/`);
+    }
+
     const count = manifest.checkpoints.length;
     const header = `${count} checkpoint${count !== 1 ? 's' : ''}`;
-    return { content: [{ type: 'text' as const, text: fmt(header, lines.length ? lines : null, projectDir) }] };
+    return {
+      content: [
+        { type: 'text' as const, text: fmt(header, lines.length ? lines : null, projectDir) },
+      ],
+    };
   },
 );
 
@@ -248,7 +326,11 @@ server.tool(
   'vigil_diff',
   "Search and investigate previous versions of your codebase. Compare checkpoint vs current working directory (with full unified diffs), compare two checkpoints against each other, retrieve any file's content from any checkpoint, or search for a string across all checkpoints to find when code existed. Use this to find previous versions of files or functions, understand what changed, and pull out whatever snippets or diffs are needed — then apply selectively with Edit.",
   {
-    name: z.string().describe('Checkpoint name to diff against (use "*" with file+search to scan all checkpoints)'),
+    name: z
+      .string()
+      .describe(
+        'Checkpoint name to diff against (use "*" with file+search to scan all checkpoints)',
+      ),
     file: z
       .string()
       .optional()
@@ -257,7 +339,10 @@ server.tool(
       .boolean()
       .optional()
       .describe('Return file list only without content diffs (faster for large changesets)'),
-    against: z.string().optional().describe('Compare against another checkpoint instead of current working directory'),
+    against: z
+      .string()
+      .optional()
+      .describe('Compare against another checkpoint instead of current working directory'),
     search: z
       .string()
       .optional()
@@ -269,10 +354,18 @@ server.tool(
 
     if ('error' in result) {
       if (result.error === 'not_found') {
-        return { content: [{ type: 'text' as const, text: fmt(`"${result.name}" not found`, null, projectDir) }] };
+        return {
+          content: [
+            { type: 'text' as const, text: fmt(`"${result.name}" not found`, null, projectDir) },
+          ],
+        };
       }
       if (result.error === 'file_not_found') {
-        return { content: [{ type: 'text' as const, text: fmt(`"${file}" not in "${name}"`, null, projectDir) }] };
+        return {
+          content: [
+            { type: 'text' as const, text: fmt(`"${file}" not in "${name}"`, null, projectDir) },
+          ],
+        };
       }
     }
 
@@ -283,7 +376,11 @@ server.tool(
           content: [
             {
               type: 'text' as const,
-              text: fmt(`"${result.search}" not found in ${result.file} across any checkpoint`, null, projectDir),
+              text: fmt(
+                `"${result.search}" not found in ${result.file} across any checkpoint`,
+                null,
+                projectDir,
+              ),
             },
           ],
         };
@@ -321,7 +418,11 @@ server.tool(
       const total = result.modified.length + result.added.length + result.deleted.length;
       if (total === 0) {
         const target = against ? `"${name}" vs "${against}"` : `"${name}"`;
-        return { content: [{ type: 'text' as const, text: fmt(`no changes vs ${target}`, null, projectDir) }] };
+        return {
+          content: [
+            { type: 'text' as const, text: fmt(`no changes vs ${target}`, null, projectDir) },
+          ],
+        };
       }
 
       const lines: string[] = [];
@@ -347,7 +448,9 @@ server.tool(
       return { content: [{ type: 'text' as const, text }] };
     }
 
-    return { content: [{ type: 'text' as const, text: fmt('unexpected result', null, projectDir) }] };
+    return {
+      content: [{ type: 'text' as const, text: fmt('unexpected result', null, projectDir) }],
+    };
   },
 );
 
@@ -364,7 +467,9 @@ server.tool(
     const result = restoreCheckpoint(projectDir, name);
 
     if ('error' in result) {
-      return { content: [{ type: 'text' as const, text: fmt(`"${name}" not found`, null, projectDir) }] };
+      return {
+        content: [{ type: 'text' as const, text: fmt(`"${name}" not found`, null, projectDir) }],
+      };
     }
 
     // Report what happened + safety info
@@ -379,11 +484,14 @@ server.tool(
       const modified = result.displaced.filter((d) => d.reason === 'modified');
       const newFiles = result.displaced.filter((d) => d.reason === 'new');
       if (modified.length > 0) {
-        for (const d of modified.slice(0, 10)) lines.push(`  modified: ${d.path} (current version saved)`);
-        if (modified.length > 10) lines.push(`  ... and ${modified.length - 10} more modified files`);
+        for (const d of modified.slice(0, 10))
+          lines.push(`  modified: ${d.path} (current version saved)`);
+        if (modified.length > 10)
+          lines.push(`  ... and ${modified.length - 10} more modified files`);
       }
       if (newFiles.length > 0) {
-        for (const d of newFiles.slice(0, 10)) lines.push(`  new: ${d.path} (moved, not in checkpoint)`);
+        for (const d of newFiles.slice(0, 10))
+          lines.push(`  new: ${d.path} (moved, not in checkpoint)`);
         if (newFiles.length > 10) lines.push(`  ... and ${newFiles.length - 10} more new files`);
       }
       lines.push(`review ${result.artifactsDir} — delete when no longer needed`);
@@ -397,12 +505,16 @@ server.tool(
       lines.push(`not restored (derived): ${skipped.join(', ')}`);
       lines.push('rebuild these before running the project');
     }
-    lines.push('for individual file/function restores, use vigil_diff to search previous versions and apply with Edit');
+    lines.push(
+      'for individual file/function restores, use vigil_diff to search previous versions and apply with Edit',
+    );
 
     // Remind about artifact cleanup when they accumulate
     const artifactsBase = join(projectDir, '.claude', 'vigil', 'artifacts');
     if (existsSync(artifactsBase)) {
-      const artifactDirs = readdirSync(artifactsBase, { withFileTypes: true }).filter((e) => e.isDirectory());
+      const artifactDirs = readdirSync(artifactsBase, { withFileTypes: true }).filter((e) =>
+        e.isDirectory(),
+      );
       if (artifactDirs.length >= 3) {
         lines.push(
           `note: ${artifactDirs.length} artifact directories in .claude/vigil/artifacts/ — review and clean up old ones if no longer needed`,
@@ -414,7 +526,11 @@ server.tool(
       content: [
         {
           type: 'text' as const,
-          text: fmt(`restored from "${name}" \u2501\u2501 ${result.filesRestored} files`, lines, projectDir),
+          text: fmt(
+            `restored from "${name}" \u2501\u2501 ${result.filesRestored} files`,
+            lines,
+            projectDir,
+          ),
         },
       ],
     };
@@ -425,7 +541,7 @@ server.tool(
 
 server.tool(
   'vigil_delete',
-  'Delete a checkpoint and reclaim disk space. Use all=true to delete everything.',
+  'Delete a checkpoint and reclaim disk space. Use all=true to delete all checkpoints. Note: artifact directories from previous restores are NOT deleted — ask the user if they want you to clean those up separately.',
   {
     name: z.string().optional().describe('Checkpoint name to delete'),
     all: z.boolean().optional().describe('Delete all checkpoints and reclaim all space'),
@@ -435,14 +551,34 @@ server.tool(
 
     if (!name && !all) {
       return {
-        content: [{ type: 'text' as const, text: fmt('specify a checkpoint name or all=true', null, projectDir) }],
+        content: [
+          {
+            type: 'text' as const,
+            text: fmt('specify a checkpoint name or all=true', null, projectDir),
+          },
+        ],
       };
     }
 
     const result = deleteCheckpoint(projectDir, name, { all });
 
     if ('error' in result) {
-      return { content: [{ type: 'text' as const, text: fmt(`"${name}" not found`, null, projectDir) }] };
+      return {
+        content: [{ type: 'text' as const, text: fmt(`"${name}" not found`, null, projectDir) }],
+      };
+    }
+
+    // Check for artifact directories that should be reviewed
+    const vigilDir = join(projectDir, '.claude', 'vigil');
+    const artifactInfo = getArtifactInfo(vigilDir);
+    const deleteLines: string[] = [];
+    if (artifactInfo.count > 0) {
+      deleteLines.push(
+        `${artifactInfo.count} artifact director${artifactInfo.count !== 1 ? 'ies' : 'y'} from previous restores (${formatBytes(artifactInfo.totalBytes)}) still in .claude/vigil/artifacts/`,
+      );
+      deleteLines.push(
+        'vigil never deletes artifacts — ask the user if they want you to remove them',
+      );
     }
 
     return {
@@ -451,7 +587,7 @@ server.tool(
           type: 'text' as const,
           text: fmt(
             `deleted ${result.deleted} \u2501\u2501 reclaimed ${formatBytes(result.gc.bytesFreed)} (${result.gc.removed} objects)`,
-            null,
+            deleteLines.length > 0 ? deleteLines : null,
             projectDir,
           ),
         },
