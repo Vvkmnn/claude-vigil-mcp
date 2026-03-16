@@ -9,6 +9,7 @@ dist/
 demo/*.cast
 demo/*.mp4
 demo/*.mov
+demo/*.old.*
 demo/.claude/
 
 # Local configuration
@@ -28,3 +29,6 @@ demo/.claude/
 
 # Generated docs
 CLAUDE.md
+
+# Internal
+TODO.md

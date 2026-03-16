@@ -1,6 +1,6 @@
 {
   "name": "claude-vigil-mcp",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "An MCP server for checkpointing and file recovery in Claude Code",
   "type": "module",
   "main": "./dist/index.js",
