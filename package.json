@@ -1,9 +1,13 @@
 {
   "name": "claude-vigil-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "An MCP server for checkpointing and file recovery in Claude Code",
   "type": "module",
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "bin": {
     "claude-vigil-mcp": "./dist/index.js"
   },
@@ -75,7 +79,7 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/sdk": "^1.27.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {

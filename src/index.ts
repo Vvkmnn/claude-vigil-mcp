@@ -118,7 +118,12 @@ function getProjectDir(): string {
 // ── MCP Server ────────────────────────────────────────────────────
 
 const server = new McpServer(
-  { name: 'claude-vigil-mcp', version },
+  {
+    name: 'claude-vigil-mcp',
+    version,
+    title: 'Claude Vigil',
+    description: 'Project checkpoint and rollback system for Claude Code',
+  },
   {
     instructions:
       'Claude Vigil creates project checkpoints for safe rollback. Use vigil_save before risky changes, vigil_list to see checkpoints and artifact status, vigil_diff to compare states or search history, vigil_restore to roll back (displaced files are preserved in .claude/vigil/artifacts/ — vigil never deletes artifacts, ask the user before cleaning them up), vigil_delete to reclaim checkpoint space.',
@@ -127,22 +132,29 @@ const server = new McpServer(
 
 // ── vigil_save ────────────────────────────────────────────────────
 
-server.tool(
+server.registerTool(
   'vigil_save',
-  'Create a named checkpoint of the entire project. Runs in background — returns immediately. If slots are full, DO NOT auto-retry — ask the user whether to delete an existing checkpoint or increase capacity.',
   {
-    name: z.string().describe('Checkpoint name (e.g., "before-refactor", "v1.0")'),
-    description: z
-      .string()
-      .optional()
-      .describe('What this checkpoint captures (shown in vigil_list)'),
-    max_checkpoints: z
-      .number()
-      .int()
-      .min(1)
-      .max(50)
-      .optional()
-      .describe('Increase the maximum number of checkpoint slots (default: 3)'),
+    title: 'Save Checkpoint',
+    description:
+      'Create a named checkpoint of the entire project. Runs in background — returns immediately. If slots are full, DO NOT auto-retry — ask the user whether to delete an existing checkpoint or increase capacity.',
+    inputSchema: {
+      name: z.string().describe('Checkpoint name (e.g., "before-refactor", "v1.0")'),
+      description: z
+        .string()
+        .optional()
+        .describe('What this checkpoint captures (shown in vigil_list)'),
+      max_checkpoints: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .optional()
+        .describe('Increase the maximum number of checkpoint slots (default: 3)'),
+    },
+    annotations: {
+      idempotentHint: true,
+    },
   },
   async ({ name, description, max_checkpoints }) => {
     const projectDir = getProjectDir();
@@ -239,12 +251,20 @@ server.tool(
 
 // ── vigil_list ────────────────────────────────────────────────────
 
-server.tool(
+server.registerTool(
   'vigil_list',
-  'List all checkpoints and disk usage. With name: list files inside that checkpoint.',
   {
-    name: z.string().optional().describe('Checkpoint name to drill into (omit for overview)'),
-    glob: z.string().optional().describe('Glob pattern to filter files (e.g., "src/auth/**")'),
+    title: 'List Checkpoints',
+    description:
+      'List all checkpoints and disk usage. With name: list files inside that checkpoint.',
+    inputSchema: {
+      name: z.string().optional().describe('Checkpoint name to drill into (omit for overview)'),
+      glob: z.string().optional().describe('Glob pattern to filter files (e.g., "src/auth/**")'),
+    },
+    annotations: {
+      readOnlyHint: true,
+      idempotentHint: true,
+    },
   },
   async ({ name, glob }) => {
     const projectDir = getProjectDir();
@@ -322,31 +342,39 @@ server.tool(
 
 // ── vigil_diff ────────────────────────────────────────────────────
 
-server.tool(
+server.registerTool(
   'vigil_diff',
-  "Search and investigate previous versions of your codebase. Compare checkpoint vs current working directory (with full unified diffs), compare two checkpoints against each other, retrieve any file's content from any checkpoint, or search for a string across all checkpoints to find when code existed. Use this to find previous versions of files or functions, understand what changed, and pull out whatever snippets or diffs are needed — then apply selectively with Edit.",
   {
-    name: z
-      .string()
-      .describe(
-        'Checkpoint name to diff against (use "*" with file+search to scan all checkpoints)',
-      ),
-    file: z
-      .string()
-      .optional()
-      .describe('Specific file to retrieve from checkpoint (returns content + diff vs current)'),
-    summary: z
-      .boolean()
-      .optional()
-      .describe('Return file list only without content diffs (faster for large changesets)'),
-    against: z
-      .string()
-      .optional()
-      .describe('Compare against another checkpoint instead of current working directory'),
-    search: z
-      .string()
-      .optional()
-      .describe('Search for this string across all checkpoints (requires name="*" and file)'),
+    title: 'Compare States',
+    description:
+      "Search and investigate previous versions of your codebase. Compare checkpoint vs current working directory (with full unified diffs), compare two checkpoints against each other, retrieve any file's content from any checkpoint, or search for a string across all checkpoints to find when code existed. Use this to find previous versions of files or functions, understand what changed, and pull out whatever snippets or diffs are needed — then apply selectively with Edit.",
+    inputSchema: {
+      name: z
+        .string()
+        .describe(
+          'Checkpoint name to diff against (use "*" with file+search to scan all checkpoints)',
+        ),
+      file: z
+        .string()
+        .optional()
+        .describe('Specific file to retrieve from checkpoint (returns content + diff vs current)'),
+      summary: z
+        .boolean()
+        .optional()
+        .describe('Return file list only without content diffs (faster for large changesets)'),
+      against: z
+        .string()
+        .optional()
+        .describe('Compare against another checkpoint instead of current working directory'),
+      search: z
+        .string()
+        .optional()
+        .describe('Search for this string across all checkpoints (requires name="*" and file)'),
+    },
+    annotations: {
+      readOnlyHint: true,
+      idempotentHint: true,
+    },
   },
   async ({ name, file, summary, against, search }) => {
     const projectDir = getProjectDir();
@@ -456,11 +484,18 @@ server.tool(
 
 // ── vigil_restore ─────────────────────────────────────────────────
 
-server.tool(
+server.registerTool(
   'vigil_restore',
-  'Restore project to a checkpoint state. Quicksaves current state first. Displaced files (modified + new) are preserved in .claude/vigil/artifacts/ — nothing is ever deleted. For individual file/function restores, use vigil_diff to get the content and apply with Edit.',
   {
-    name: z.string().describe('Checkpoint name to restore'),
+    title: 'Restore Checkpoint',
+    description:
+      'Restore project to a checkpoint state. Quicksaves current state first. Displaced files (modified + new) are preserved in .claude/vigil/artifacts/ — nothing is ever deleted. For individual file/function restores, use vigil_diff to get the content and apply with Edit.',
+    inputSchema: {
+      name: z.string().describe('Checkpoint name to restore'),
+    },
+    annotations: {
+      destructiveHint: true,
+    },
   },
   async ({ name }) => {
     const projectDir = getProjectDir();
@@ -539,12 +574,19 @@ server.tool(
 
 // ── vigil_delete ──────────────────────────────────────────────────
 
-server.tool(
+server.registerTool(
   'vigil_delete',
-  'Delete a checkpoint and reclaim disk space. Use all=true to delete all checkpoints. Note: artifact directories from previous restores are NOT deleted — ask the user if they want you to clean those up separately.',
   {
-    name: z.string().optional().describe('Checkpoint name to delete'),
-    all: z.boolean().optional().describe('Delete all checkpoints and reclaim all space'),
+    title: 'Delete Checkpoint',
+    description:
+      'Delete a checkpoint and reclaim disk space. Use all=true to delete all checkpoints. Note: artifact directories from previous restores are NOT deleted — ask the user if they want you to clean those up separately.',
+    inputSchema: {
+      name: z.string().optional().describe('Checkpoint name to delete'),
+      all: z.boolean().optional().describe('Delete all checkpoints and reclaim all space'),
+    },
+    annotations: {
+      destructiveHint: true,
+    },
   },
   async ({ name, all }) => {
     const projectDir = getProjectDir();
