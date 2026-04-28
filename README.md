@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/vvkmnn-claude-vigil-mcp-badge.png)](https://mseep.ai/app/vvkmnn-claude-vigil-mcp)
+
 <img align="right" src="claude-vigil.svg" alt="claude-vigil-mcp" width="220">
 
 # claude-vigil-mcp
